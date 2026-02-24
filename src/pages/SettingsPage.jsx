@@ -1,0 +1,735 @@
+import { useState } from 'react';
+import { Card, CardTitle, CardDescription } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { Badge } from '../components/ui/Badge';
+import { Modal } from '../components/ui/Modal';
+import { useClaudeAI } from '../hooks/useClaudeAI';
+import {
+  getMealPreferences, addMeal, removeMeal,
+  getProductDictionary, addProductTranslation, removeProductTranslation,
+  getSettings, updateSettings, resetToDefaults,
+  getFavouriteRecipes, saveFavouriteRecipe, removeFavouriteRecipe,
+} from '../services/storage';
+import {
+  getProfile, saveProfile, clearProfile,
+  getApiKey, saveApiKey, removeApiKey,
+  getUsage, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS,
+} from '../services/profile';
+
+// ─── Small helper: masked API key display ─────────────────────────────────────
+function maskKey(key) {
+  if (!key) return '';
+  return key.substring(0, 12) + '••••••••' + key.slice(-4);
+}
+
+// ─── Inline member form (reused from Onboarding) ─────────────────────────────
+function MemberForm({ initial, onSave, onCancel }) {
+  const [name, setName]           = useState(initial?.name || '');
+  const [lifeStage, setLifeStage] = useState(initial?.lifeStage || 'adult');
+  const [notes, setNotes]         = useState(initial?.notes || []);
+  const isAdult = lifeStage === 'adult' || lifeStage === 'senior';
+  const toggleNote = (v) => setNotes(p => p.includes(v) ? p.filter(n => n !== v) : [...p, v]);
+
+  return (
+    <div className="bg-gray-50 rounded-xl p-4 space-y-4 border border-gray-200">
+      <div className="space-y-1">
+        <label className="text-sm font-medium text-gray-700">Name <span className="text-gray-400 font-normal">(optional)</span></label>
+        <input
+          type="text"
+          placeholder="e.g. Mum, Theo…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
+        />
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-gray-700">Life stage</label>
+        <div className="grid grid-cols-5 gap-1">
+          {Object.entries(LIFE_STAGES).map(([key, stage]) => (
+            <button key={key} onClick={() => { setLifeStage(key); setNotes([]); }}
+              className={`flex flex-col items-center p-1.5 rounded-xl border-2 transition-colors text-center ${
+                lifeStage === key ? 'border-basket-green-500 bg-basket-green-50' : 'border-gray-200 bg-white hover:border-gray-300'
+              }`}>
+              <span className="text-lg">{stage.emoji}</span>
+              <span className="text-xs font-medium text-gray-700 leading-tight">{stage.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {isAdult && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Anything to note? <span className="text-gray-400 font-normal">(optional)</span></label>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setNotes([])}
+              className={`px-3 py-1 rounded-full text-sm border transition-colors ${notes.length === 0 ? 'bg-basket-green-600 text-white border-basket-green-600' : 'border-gray-300 text-gray-600'}`}>
+              None
+            </button>
+            {ADULT_NOTES_OPTIONS.map(opt => (
+              <button key={opt.value} onClick={() => toggleNote(opt.value)}
+                className={`px-3 py-1 rounded-full text-sm border transition-colors ${notes.includes(opt.value) ? 'bg-basket-green-600 text-white border-basket-green-600' : 'border-gray-300 text-gray-600'}`}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel} className="flex-1">Cancel</Button>
+        <Button size="sm" onClick={() => onSave({ name: name.trim(), lifeStage, notes: isAdult ? notes : [] })} className="flex-1">
+          {initial ? 'Update' : 'Add'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main settings page ───────────────────────────────────────────────────────
+export function SettingsPage({ onProfileChange, onApiKeyChange }) {
+  const [profile, setProfileState]   = useState(getProfile());
+  const [preferences, setPreferences] = useState(getMealPreferences());
+  const [dictionary, setDictionary]   = useState(getProductDictionary());
+  const [settings, setSettings]       = useState(getSettings());
+  const [savedRecipes, setSavedRecipes] = useState(getFavouriteRecipes());
+  const currentApiKey                 = getApiKey();
+  const usage                         = getUsage();
+
+  // Profile editing modal
+  const [showProfileModal, setShowProfileModal]   = useState(false);
+  const [editProfile, setEditProfile]             = useState(null);
+
+  // Members
+  const [showMemberForm, setShowMemberForm]       = useState(false);
+
+  // API Key modal
+  const [showApiKeyModal, setShowApiKeyModal]     = useState(false);
+  const [newApiKey, setNewApiKey]                 = useState('');
+  const [apiKeyError, setApiKeyError]             = useState('');
+
+  // Meal modals
+  const [showAddMealModal, setShowAddMealModal]   = useState(false);
+  const [mealType, setMealType]                   = useState('adults');
+  const [newMeal, setNewMeal]                     = useState('');
+
+  // Code modals
+  const [showAddCodeModal, setShowAddCodeModal]   = useState(false);
+  const [newCode, setNewCode]                     = useState('');
+  const [newName, setNewName]                     = useState('');
+
+  const [showResetConfirm, setShowResetConfirm]   = useState(false);
+
+  // Recipe import
+  const [recipeUrl, setRecipeUrl]                 = useState('');
+  const [importResult, setImportResult]           = useState(null);
+  const [importError, setImportError]             = useState('');
+  const [showManualFallback, setShowManualFallback] = useState(false);
+  const [pastedText, setPastedText]               = useState('');
+  const [recipeMealType, setRecipeMealType]       = useState('adults');
+  const { importRecipe, loading: importLoading }  = useClaudeAI();
+
+  // ── Profile helpers ──────────────────────────────────────────────────────
+  const openProfileModal = () => {
+    setEditProfile({ ...profile });
+    setShowProfileModal(true);
+  };
+
+  const handleSaveProfile = () => {
+    saveProfile(editProfile);
+    setProfileState(getProfile());
+    setShowProfileModal(false);
+    onProfileChange?.();
+  };
+
+  const handleAddMemberToEdit = (member) => {
+    setEditProfile(p => ({ ...p, members: [...(p.members || []), member] }));
+    setShowMemberForm(false);
+  };
+
+  const handleRemoveMemberFromEdit = (i) => {
+    setEditProfile(p => ({ ...p, members: p.members.filter((_, idx) => idx !== i) }));
+  };
+
+  // ── API Key helpers ──────────────────────────────────────────────────────
+  const handleSaveApiKey = () => {
+    const trimmed = newApiKey.trim();
+    if (!trimmed.startsWith('sk-ant-')) {
+      setApiKeyError("API keys start with sk-ant-");
+      return;
+    }
+    saveApiKey(trimmed);
+    setNewApiKey('');
+    setShowApiKeyModal(false);
+    setApiKeyError('');
+    onApiKeyChange?.();
+  };
+
+  const handleRemoveApiKey = () => {
+    removeApiKey();
+    onApiKeyChange?.();
+  };
+
+  // ── Meal helpers ─────────────────────────────────────────────────────────
+  const handleAddMeal = () => {
+    if (newMeal.trim()) {
+      addMeal(mealType, newMeal.trim());
+      setPreferences(getMealPreferences());
+      setNewMeal('');
+      setShowAddMealModal(false);
+    }
+  };
+
+  const handleRemoveMeal = (type, meal) => {
+    removeMeal(type, meal);
+    setPreferences(getMealPreferences());
+  };
+
+  // ── Dictionary helpers ───────────────────────────────────────────────────
+  const handleAddCode = () => {
+    if (newCode.trim() && newName.trim()) {
+      addProductTranslation(newCode.trim(), newName.trim());
+      setDictionary(getProductDictionary());
+      setNewCode(''); setNewName('');
+      setShowAddCodeModal(false);
+    }
+  };
+
+  const handleRemoveCode = (code) => {
+    removeProductTranslation(code);
+    setDictionary(getProductDictionary());
+  };
+
+  // ── Budget ───────────────────────────────────────────────────────────────
+  const handleBudgetChange = (key, value) => {
+    updateSettings({ [key]: parseInt(value) || 0 });
+    setSettings(getSettings());
+  };
+
+  // ── Reset ────────────────────────────────────────────────────────────────
+  const handleReset = () => {
+    resetToDefaults();
+    clearProfile();
+    removeApiKey();
+    setPreferences(getMealPreferences());
+    setDictionary(getProductDictionary());
+    setSettings(getSettings());
+    setSavedRecipes(getFavouriteRecipes());
+    setShowResetConfirm(false);
+    onProfileChange?.();
+    onApiKeyChange?.();
+  };
+
+  // ── Recipe import ────────────────────────────────────────────────────────
+  const handleImportFromUrl = async () => {
+    if (!recipeUrl.trim()) return;
+    setImportError(''); setImportResult(null); setShowManualFallback(false);
+    try {
+      const result = await importRecipe(recipeUrl.trim(), undefined);
+      if (!result.scrapable && !result.name) {
+        setImportError(result.error || 'Could not fetch that page.');
+        setShowManualFallback(true);
+      } else {
+        setImportResult(result);
+      }
+    } catch (err) { setImportError(err.message); }
+  };
+
+  const handleExtractFromText = async () => {
+    if (!pastedText.trim()) return;
+    setImportError(''); setImportResult(null);
+    try {
+      const result = await importRecipe(undefined, pastedText.trim());
+      setImportResult(result);
+    } catch (err) { setImportError(err.message); }
+  };
+
+  const handleSaveRecipe = () => {
+    if (!importResult) return;
+    saveFavouriteRecipe({
+      name: importResult.name,
+      servings: importResult.servings,
+      prepTime: importResult.prepTime,
+      cookTime: importResult.cookTime,
+      ingredients: importResult.ingredients,
+      sourceUrl: recipeUrl.trim() || null,
+      mealType: recipeMealType,
+    });
+    addMeal(recipeMealType, importResult.name);
+    setPreferences(getMealPreferences());
+    setSavedRecipes(getFavouriteRecipes());
+    setImportResult(null); setRecipeUrl(''); setPastedText('');
+    setShowManualFallback(false); setImportError('');
+  };
+
+  const handleDiscardRecipe = () => {
+    setImportResult(null); setImportError(''); setShowManualFallback(false); setPastedText('');
+  };
+
+  const aldiMappedCount = (recipe) => (recipe.ingredients || []).filter(i => i.aldiProduct).length;
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold text-gray-900">Settings</h2>
+
+      {/* ── Family Profile ── */}
+      <Card>
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <CardTitle>Family Profile</CardTitle>
+            <CardDescription>{profile?.familyName || 'Your family'} · {profile?.supermarket || 'Aldi'}</CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" onClick={openProfileModal}>Edit</Button>
+        </div>
+        {profile?.members?.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {profile.members.map((m, i) => {
+              const stage = LIFE_STAGES[m.lifeStage];
+              return (
+                <div key={i} className="flex items-center gap-1.5 bg-gray-50 rounded-full px-3 py-1 text-sm">
+                  <span>{stage?.emoji}</span>
+                  <span className="text-gray-700">{m.name || stage?.label}</span>
+                  {m.notes?.length > 0 && <span className="text-gray-400">· {m.notes.join(', ')}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-500">
+          <span>Budget: £{profile?.budget?.min ?? settings.budgetMin}–£{profile?.budget?.max ?? settings.budgetMax}</span>
+          <span>Batch cook: {profile?.batchCooksPerWeek ?? 2}× /week · {profile?.daysPerBatch ?? 2} days</span>
+        </div>
+      </Card>
+
+      {/* ── API Key ── */}
+      <Card>
+        <div className="flex items-start justify-between">
+          <div>
+            <CardTitle>API Key</CardTitle>
+            <CardDescription>
+              {currentApiKey ? maskKey(currentApiKey) : 'No key set — using shared key'}
+            </CardDescription>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { setNewApiKey(''); setApiKeyError(''); setShowApiKeyModal(true); }}>
+              {currentApiKey ? 'Change' : 'Add Key'}
+            </Button>
+            {currentApiKey && (
+              <button onClick={handleRemoveApiKey} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* ── Usage ── */}
+      <Card>
+        <CardTitle>Usage</CardTitle>
+        <div className="mt-2 space-y-1 text-sm text-gray-600">
+          <div className="flex justify-between">
+            <span>Total scans</span>
+            <span className="font-medium">{usage.totalScans}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Estimated API cost</span>
+            <span className="font-medium">£{(usage.totalScans * 0.03).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Key status</span>
+            <span className="font-medium">{currentApiKey ? 'Your own key ✓' : 'Shared key'}</span>
+          </div>
+          {usage.firstScanDate && (
+            <div className="flex justify-between">
+              <span>First scan</span>
+              <span className="font-medium">{usage.firstScanDate}</span>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* ── Budget ── */}
+      <Card>
+        <CardTitle>Weekly Budget</CardTitle>
+        <CardDescription>Set your target spending range</CardDescription>
+        <div className="mt-4 flex items-center gap-4">
+          <div className="flex-1">
+            <label className="text-sm text-gray-500">Min</label>
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">£</span>
+              <Input type="number" value={settings.budgetMin}
+                onChange={(e) => handleBudgetChange('budgetMin', e.target.value)} className="text-lg font-medium" />
+            </div>
+          </div>
+          <span className="text-gray-400 mt-6">to</span>
+          <div className="flex-1">
+            <label className="text-sm text-gray-500">Max</label>
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">£</span>
+              <Input type="number" value={settings.budgetMax}
+                onChange={(e) => handleBudgetChange('budgetMax', e.target.value)} className="text-lg font-medium" />
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* ── Adult Meals ── */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <CardTitle>Adult Favourites</CardTitle>
+            <CardDescription>Meals the adults enjoy</CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => { setMealType('adults'); setShowAddMealModal(true); }}>+ Add</Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {preferences.adults.map((meal, i) => (
+            <Badge key={i} variant="primary" className="cursor-pointer hover:opacity-80"
+              onClick={() => handleRemoveMeal('adults', meal)}>{meal} ×</Badge>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Kids Meals ── */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <CardTitle>Kids&apos; Favourites</CardTitle>
+            <CardDescription>Meals the children enjoy</CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => { setMealType('kids'); setShowAddMealModal(true); }}>+ Add</Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {preferences.kids.map((meal, i) => (
+            <Badge key={i} variant="secondary" className="cursor-pointer hover:opacity-80"
+              onClick={() => handleRemoveMeal('kids', meal)}>{meal} ×</Badge>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Import Recipe from URL ── */}
+      <Card>
+        <CardTitle>Import Recipe from URL</CardTitle>
+        <CardDescription>Paste a recipe link — Claude extracts ingredients and maps them to store products</CardDescription>
+
+        {!importResult && (
+          <div className="mt-4 space-y-3">
+            <div className="flex gap-2">
+              <input type="url" placeholder="https://www.bbcgoodfood.com/recipes/…"
+                value={recipeUrl} onChange={(e) => setRecipeUrl(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleImportFromUrl()}
+                disabled={importLoading}
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500" />
+              <Button onClick={handleImportFromUrl} loading={importLoading}
+                disabled={!recipeUrl.trim() || importLoading} size="sm">Import</Button>
+            </div>
+            {importError && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                <p className="font-medium">Could not fetch that page</p>
+                <p className="text-amber-700 mt-0.5">{importError}</p>
+              </div>
+            )}
+            {showManualFallback && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600 font-medium">Paste the recipe text below instead:</p>
+                <textarea rows={6} value={pastedText} onChange={(e) => setPastedText(e.target.value)}
+                  placeholder="Paste the recipe ingredients and instructions here…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 resize-none" />
+                <Button onClick={handleExtractFromText} loading={importLoading}
+                  disabled={!pastedText.trim() || importLoading} size="sm">Extract Recipe</Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {importResult && (
+          <div className="mt-4 space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-semibold text-gray-900">{importResult.name}</h3>
+                <div className="flex gap-3 mt-1 text-sm text-gray-500">
+                  {importResult.servings && <span>Serves {importResult.servings}</span>}
+                  {importResult.prepTime && <span>Prep: {importResult.prepTime}</span>}
+                  {importResult.cookTime && <span>Cook: {importResult.cookTime}</span>}
+                </div>
+              </div>
+              {recipeUrl && (
+                <a href={recipeUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-basket-green-600 hover:underline shrink-0 ml-2">View original</a>
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">
+                Ingredients
+                <span className="ml-2 text-xs text-gray-400 font-normal">
+                  {aldiMappedCount(importResult)} of {importResult.ingredients?.length || 0} mapped to store
+                </span>
+              </p>
+              <div className="divide-y divide-gray-50 border border-gray-100 rounded-lg overflow-hidden">
+                {(importResult.ingredients || []).map((ing, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-2 text-sm bg-white">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-gray-500 shrink-0 w-16 text-xs">{ing.quantity}</span>
+                      <span className="text-gray-900 truncate">{ing.item}</span>
+                    </div>
+                    {ing.aldiProduct
+                      ? <Badge variant="info" size="sm" className="shrink-0 ml-2">{ing.aldiProduct}</Badge>
+                      : <span className="text-xs text-gray-300 shrink-0 ml-2">—</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Add to favourites as:</p>
+              <div className="flex gap-2">
+                {['adults', 'kids'].map(type => (
+                  <button key={type} onClick={() => setRecipeMealType(type)}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      recipeMealType === type
+                        ? type === 'adults' ? 'bg-basket-green-600 text-white border-basket-green-600' : 'bg-basket-orange-500 text-white border-basket-orange-500'
+                        : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                    }`}>
+                    {type === 'adults' ? 'Adult Favourites' : "Kids' Favourites"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" size="sm" onClick={handleDiscardRecipe} className="flex-1">Discard</Button>
+              <Button size="sm" onClick={handleSaveRecipe} className="flex-1">Save to Favourites</Button>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* ── Saved Recipes ── */}
+      {savedRecipes.length > 0 && (
+        <Card>
+          <CardTitle>Saved Recipes</CardTitle>
+          <CardDescription>Recipes imported from the web</CardDescription>
+          <div className="mt-3 space-y-2">
+            {savedRecipes.map((recipe) => (
+              <div key={recipe.id} className="flex items-start justify-between py-2 border-b border-gray-50 last:border-0">
+                <div className="min-w-0">
+                  <p className="font-medium text-gray-900 text-sm">{recipe.name}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <Badge variant={recipe.mealType === 'kids' ? 'secondary' : 'primary'} size="sm">
+                      {recipe.mealType === 'kids' ? 'Kids' : 'Adults'}
+                    </Badge>
+                    <span className="text-xs text-gray-400">{recipe.ingredients?.length || 0} ingredients</span>
+                    {recipe.sourceUrl && (
+                      <a href={recipe.sourceUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-basket-green-600 hover:underline">Source</a>
+                    )}
+                  </div>
+                </div>
+                <button onClick={() => { removeFavouriteRecipe(recipe.id); setSavedRecipes(getFavouriteRecipes()); }}
+                  className="text-red-400 hover:text-red-600 text-sm ml-3 shrink-0">Remove</button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* ── Product Dictionary ── */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <CardTitle>Product Dictionary</CardTitle>
+            <CardDescription>Translate receipt codes — numeric codes have priority</CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setShowAddCodeModal(true)}>+ Add</Button>
+        </div>
+        <div className="max-h-64 overflow-y-auto space-y-1">
+          {dictionary.numeric && Object.entries(dictionary.numeric).map(([code, name]) => (
+            <div key={`num-${code}`} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+              <div className="flex items-center gap-2">
+                <Badge variant="info" size="sm">ID</Badge>
+                <span className="font-mono text-sm text-gray-500">{code}</span>
+                <span className="mx-1 text-gray-300">→</span>
+                <span className="text-gray-900">{name}</span>
+              </div>
+              <button onClick={() => handleRemoveCode(code)} className="text-red-500 hover:text-red-700 text-sm">Remove</button>
+            </div>
+          ))}
+          {dictionary.text && Object.entries(dictionary.text).map(([code, name]) => (
+            <div key={`txt-${code}`} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+              <div className="flex items-center gap-2">
+                <Badge variant="default" size="sm">TXT</Badge>
+                <span className="font-mono text-sm text-gray-500">{code}</span>
+                <span className="mx-1 text-gray-300">→</span>
+                <span className="text-gray-900">{name}</span>
+              </div>
+              <button onClick={() => handleRemoveCode(code)} className="text-red-500 hover:text-red-700 text-sm">Remove</button>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Reset ── */}
+      <Card className="bg-red-50 border-red-200">
+        <CardTitle className="text-red-800">Reset Data</CardTitle>
+        <CardDescription className="text-red-600">Clear all history, profile and restore defaults</CardDescription>
+        <Button variant="danger" size="sm" onClick={() => setShowResetConfirm(true)} className="mt-3">Reset All Data</Button>
+      </Card>
+
+      {/* ── App Info ── */}
+      <Card className="text-center text-sm text-gray-500">
+        <p className="font-medium text-gray-700">FamilyBasket</p>
+        <p>Family Grocery Intelligence Tool</p>
+        {profile && (
+          <>
+            <p className="mt-2">👨‍👩‍👦‍👦 {profile.familyName}</p>
+            <p>🛒 {profile.supermarket}</p>
+            <p>💰 Budget: £{profile.budget?.min}–£{profile.budget?.max}/week</p>
+          </>
+        )}
+      </Card>
+
+      {/* ══ MODALS ══════════════════════════════════════════════════════════ */}
+
+      {/* Edit Profile Modal */}
+      <Modal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} title="Edit Family Profile" size="lg">
+        {editProfile && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1 col-span-2">
+                <label className="text-sm font-medium text-gray-700">Family name</label>
+                <input type="text" value={editProfile.familyName || ''}
+                  onChange={(e) => setEditProfile(p => ({ ...p, familyName: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700">Supermarket</label>
+                <select value={editProfile.supermarket || 'Aldi'}
+                  onChange={(e) => setEditProfile(p => ({ ...p, supermarket: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white">
+                  {SUPERMARKETS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700">Batch cooks/week</label>
+                <div className="flex gap-1">
+                  {[1,2,3,4,5].map(n => (
+                    <button key={n} onClick={() => setEditProfile(p => ({ ...p, batchCooksPerWeek: n }))}
+                      className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${editProfile.batchCooksPerWeek === n ? 'bg-basket-green-600 text-white border-basket-green-600' : 'border-gray-200 text-gray-600'}`}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700">Budget min (£)</label>
+                <input type="number" value={editProfile.budget?.min || 90}
+                  onChange={(e) => setEditProfile(p => ({ ...p, budget: { ...p.budget, min: parseInt(e.target.value) || 0 } }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700">Budget max (£)</label>
+                <input type="number" value={editProfile.budget?.max || 120}
+                  onChange={(e) => setEditProfile(p => ({ ...p, budget: { ...p.budget, max: parseInt(e.target.value) || 0 } }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500" />
+              </div>
+            </div>
+
+            {/* Members */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Family members</label>
+              {(editProfile.members || []).map((m, i) => {
+                const stage = LIFE_STAGES[m.lifeStage];
+                return (
+                  <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span>{stage?.emoji}</span>
+                      <span className="text-sm font-medium text-gray-900">{m.name || stage?.label}</span>
+                      <span className="text-xs text-gray-400">{stage?.ageRange}{m.notes?.length ? ` · ${m.notes.join(', ')}` : ''}</span>
+                    </div>
+                    <button onClick={() => handleRemoveMemberFromEdit(i)} className="text-gray-300 hover:text-red-400 text-lg">×</button>
+                  </div>
+                );
+              })}
+              {showMemberForm ? (
+                <MemberForm
+                  onSave={handleAddMemberToEdit}
+                  onCancel={() => setShowMemberForm(false)}
+                />
+              ) : (
+                <button onClick={() => setShowMemberForm(true)}
+                  className="w-full border-2 border-dashed border-gray-300 rounded-xl py-3 text-sm text-gray-500 hover:border-basket-green-400 hover:text-basket-green-600 transition-colors">
+                  + Add family member
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setShowProfileModal(false)} className="flex-1">Cancel</Button>
+              <Button onClick={handleSaveProfile} className="flex-1">Save Profile</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* API Key Modal */}
+      <Modal isOpen={showApiKeyModal} onClose={() => setShowApiKeyModal(false)} title="Update API Key">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Enter your Anthropic API key. Get one free at <span className="font-mono text-xs">console.anthropic.com</span>
+          </p>
+          <input type="password" placeholder="sk-ant-api03-…" value={newApiKey}
+            onChange={(e) => { setNewApiKey(e.target.value); setApiKeyError(''); }}
+            onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 font-mono" />
+          {apiKeyError && <p className="text-sm text-red-600">{apiKeyError}</p>}
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowApiKeyModal(false)} className="flex-1">Cancel</Button>
+            <Button onClick={handleSaveApiKey} disabled={!newApiKey.trim()} className="flex-1">Save Key</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Meal Modal */}
+      <Modal isOpen={showAddMealModal} onClose={() => setShowAddMealModal(false)}
+        title={`Add ${mealType === 'adults' ? 'Adult' : 'Kids'} Favourite`}>
+        <div className="space-y-4">
+          <Input label="Meal Name" placeholder="e.g., Spaghetti Bolognese" value={newMeal}
+            onChange={(e) => setNewMeal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddMeal()} />
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowAddMealModal(false)} className="flex-1">Cancel</Button>
+            <Button onClick={handleAddMeal} className="flex-1">Add Meal</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Code Modal */}
+      <Modal isOpen={showAddCodeModal} onClose={() => setShowAddCodeModal(false)} title="Add Product Translation">
+        <div className="space-y-4">
+          <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+            <p className="font-medium">Tip: Aldi uses numeric product codes</p>
+            <p className="text-blue-600 mt-1">Look for 5-6 digit numbers on your receipt (e.g., 852012, 701482)</p>
+          </div>
+          <Input label="Receipt Code" placeholder="e.g., 852012 or CKN THIGH FLIS" value={newCode}
+            onChange={(e) => setNewCode(e.target.value)} />
+          <Input label="Product Name" placeholder="e.g., Chicken Thigh Fillets" value={newName}
+            onChange={(e) => setNewName(e.target.value)} />
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowAddCodeModal(false)} className="flex-1">Cancel</Button>
+            <Button onClick={handleAddCode} className="flex-1">Save</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Reset Confirm Modal */}
+      <Modal isOpen={showResetConfirm} onClose={() => setShowResetConfirm(false)} title="Reset All Data?">
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            This will clear all shopping history, meal preferences, saved recipes, your family profile,
+            and API key. This cannot be undone.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowResetConfirm(false)} className="flex-1">Cancel</Button>
+            <Button variant="danger" onClick={handleReset} className="flex-1">Reset Everything</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+export default SettingsPage;

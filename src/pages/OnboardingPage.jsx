@@ -1,0 +1,429 @@
+import { useState } from 'react';
+import { saveProfile, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS } from '../services/profile';
+import { Button } from '../components/ui/Button';
+
+const TOTAL_STEPS = 3;
+
+// ─── Step 1: Family basics ────────────────────────────────────────────────────
+function StepBasics({ data, onChange }) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Tell us about your household</h2>
+        <p className="text-sm text-gray-500 mt-1">This personalises all the AI advice to your household.</p>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium text-gray-700">Household name</label>
+        <input
+          type="text"
+          placeholder="e.g. The Smiths"
+          value={data.householdName}
+          onChange={(e) => onChange({ householdName: e.target.value })}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-sm font-medium text-gray-700">Primary supermarket</label>
+        <select
+          value={data.supermarket}
+          onChange={(e) => onChange({ supermarket: e.target.value })}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
+        >
+          {SUPERMARKETS.map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-gray-700">Weekly grocery budget</label>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 space-y-1">
+            <label className="text-xs text-gray-400">Min</label>
+            <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-basket-green-500">
+              <span className="px-2 text-gray-400 text-sm">£</span>
+              <input
+                type="number"
+                min="10"
+                max="500"
+                value={data.budgetMin}
+                onChange={(e) => onChange({ budgetMin: parseInt(e.target.value) || 0 })}
+                className="flex-1 py-2 pr-2 text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+          <span className="text-gray-400 text-sm mt-4">to</span>
+          <div className="flex-1 space-y-1">
+            <label className="text-xs text-gray-400">Max</label>
+            <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-basket-green-500">
+              <span className="px-2 text-gray-400 text-sm">£</span>
+              <input
+                type="number"
+                min="10"
+                max="500"
+                value={data.budgetMax}
+                onChange={(e) => onChange({ budgetMax: parseInt(e.target.value) || 0 })}
+                className="flex-1 py-2 pr-2 text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Member add/edit form ─────────────────────────────────────────────────────
+function MemberForm({ initial, onSave, onCancel }) {
+  const [name, setName]           = useState(initial?.name || '');
+  const [lifeStage, setLifeStage] = useState(initial?.lifeStage || 'adult');
+  const [notes, setNotes]         = useState(initial?.notes || []);
+
+  const isAdult = lifeStage === 'adult' || lifeStage === 'senior';
+
+  const toggleNote = (value) => {
+    setNotes(prev =>
+      prev.includes(value) ? prev.filter(n => n !== value) : [...prev, value]
+    );
+  };
+
+  const handleSave = () => {
+    onSave({
+      name: name.trim(),
+      lifeStage,
+      notes: isAdult ? notes : [],
+    });
+  };
+
+  return (
+    <div className="bg-gray-50 rounded-xl p-4 space-y-4 border border-gray-200">
+      <div className="space-y-1">
+        <label className="text-sm font-medium text-gray-700">Name <span className="text-gray-400 font-normal">(optional)</span></label>
+        <input
+          type="text"
+          placeholder="e.g. Mum, Theo, Grandma…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-gray-700">Life stage</label>
+        <div className="grid grid-cols-5 gap-1.5">
+          {Object.entries(LIFE_STAGES).map(([key, stage]) => (
+            <button
+              key={key}
+              onClick={() => { setLifeStage(key); setNotes([]); }}
+              className={`flex flex-col items-center p-2 rounded-xl border-2 transition-colors text-center ${
+                lifeStage === key
+                  ? 'border-basket-green-500 bg-basket-green-50'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+              }`}
+            >
+              <span className="text-xl">{stage.emoji}</span>
+              <span className="text-xs font-medium text-gray-700 mt-0.5 leading-tight">{stage.label}</span>
+              <span className="text-xs text-gray-400 leading-tight">{stage.ageRange}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isAdult && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">
+            Anything we should know? <span className="text-gray-400 font-normal">(optional)</span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setNotes([])}
+              className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                notes.length === 0
+                  ? 'bg-basket-green-600 text-white border-basket-green-600'
+                  : 'border-gray-300 text-gray-600 hover:border-gray-400'
+              }`}
+            >
+              None
+            </button>
+            {ADULT_NOTES_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => toggleNote(opt.value)}
+                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                  notes.includes(opt.value)
+                    ? 'bg-basket-green-600 text-white border-basket-green-600'
+                    : 'border-gray-300 text-gray-600 hover:border-gray-400'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel} className="flex-1">
+          Cancel
+        </Button>
+        <Button size="sm" onClick={handleSave} className="flex-1">
+          {initial ? 'Update' : 'Add'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 2: Family members ───────────────────────────────────────────────────
+function StepMembers({ members, onAdd, onRemove }) {
+  const [showForm, setShowForm] = useState(members.length === 0);
+
+  const handleSave = (member) => {
+    onAdd(member);
+    setShowForm(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Who&apos;s in your household?</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          This helps us tailor nutrition advice and portion sizes to everyone&apos;s needs.
+        </p>
+      </div>
+
+      {/* Member list */}
+      {members.length > 0 && (
+        <div className="space-y-2">
+          {members.map((m, i) => {
+            const stage = LIFE_STAGES[m.lifeStage];
+            return (
+              <div
+                key={i}
+                className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-3"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">{stage?.emoji}</span>
+                  <div>
+                    <p className="font-medium text-gray-900">{m.name || stage?.label || 'Household member'}</p>
+                    <p className="text-xs text-gray-500">
+                      {stage?.label} ({stage?.ageRange})
+                      {m.notes?.length ? ` · ${m.notes.join(', ')}` : ''}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => onRemove(i)}
+                  className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add member form or button */}
+      {showForm ? (
+        <MemberForm
+          onSave={handleSave}
+          onCancel={() => members.length > 0 && setShowForm(false)}
+        />
+      ) : (
+        <button
+          onClick={() => setShowForm(true)}
+          className="w-full border-2 border-dashed border-gray-300 rounded-xl py-4 text-sm text-gray-500 hover:border-basket-green-400 hover:text-basket-green-600 transition-colors"
+        >
+          + Add household member
+        </button>
+      )}
+
+      {members.length === 0 && !showForm && (
+        <p className="text-sm text-amber-600 text-center">Add at least one household member to continue.</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Step 3: Cooking habits ───────────────────────────────────────────────────
+function StepCooking({ data, onChange }) {
+  const cookOptions = [1, 2, 3, 4, 5];
+  const dayOptions  = [
+    { value: 1, label: '1 day' },
+    { value: 2, label: '2 days' },
+    { value: 3, label: '3 days' },
+    { value: 4, label: '4 days' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">How do you cook?</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          We&apos;ll use this to size up batch recipes and shopping quantities.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <label className="text-sm font-medium text-gray-700">
+          How many times a week do you batch cook?
+        </label>
+        <div className="flex gap-2">
+          {cookOptions.map(n => (
+            <button
+              key={n}
+              onClick={() => onChange({ batchCooksPerWeek: n })}
+              className={`flex-1 py-3 rounded-xl border-2 text-sm font-medium transition-colors ${
+                data.batchCooksPerWeek === n
+                  ? 'border-basket-green-500 bg-basket-green-50 text-basket-green-700'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <label className="text-sm font-medium text-gray-700">
+          How many days does each cook usually last?
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {dayOptions.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => onChange({ daysPerBatch: opt.value })}
+              className={`py-3 rounded-xl border-2 text-sm font-medium transition-colors ${
+                data.daysPerBatch === opt.value
+                  ? 'border-basket-green-500 bg-basket-green-50 text-basket-green-700'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Progress bar ─────────────────────────────────────────────────────────────
+function ProgressBar({ step }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {Array.from({ length: TOTAL_STEPS }, (_, i) => (
+        <div
+          key={i}
+          className={`h-1.5 flex-1 rounded-full transition-colors ${
+            i < step ? 'bg-basket-green-500' : 'bg-gray-200'
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Main onboarding wizard ───────────────────────────────────────────────────
+export function OnboardingPage({ onComplete }) {
+  const [step, setStep] = useState(1);
+
+  const [basics, setBasics] = useState({
+    householdName: '',
+    supermarket: 'Aldi',
+    budgetMin: 90,
+    budgetMax: 120,
+  });
+
+  const [members, setMembers] = useState([]);
+
+  const [cooking, setCooking] = useState({
+    batchCooksPerWeek: 2,
+    daysPerBatch: 2,
+  });
+
+  const canAdvanceStep1 = basics.householdName.trim().length > 0;
+  const canAdvanceStep2 = members.length > 0;
+
+  const handleNext = () => {
+    if (step < TOTAL_STEPS) setStep(s => s + 1);
+  };
+
+  const handleBack = () => {
+    if (step > 1) setStep(s => s - 1);
+  };
+
+  const handleFinish = () => {
+    const profile = {
+      householdName: basics.householdName.trim(),
+      supermarket: basics.supermarket,
+      budget: { min: basics.budgetMin, max: basics.budgetMax },
+      members,
+      batchCooksPerWeek: cooking.batchCooksPerWeek,
+      daysPerBatch: cooking.daysPerBatch,
+    };
+    saveProfile(profile);
+    onComplete();
+  };
+
+  const isNextDisabled =
+    (step === 1 && !canAdvanceStep1) ||
+    (step === 2 && !canAdvanceStep2);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-basket-green-50 to-white flex items-center justify-center p-4">
+      <div className="w-full max-w-md space-y-5">
+
+        {/* Header */}
+        <div className="text-center">
+          <span className="text-3xl">🧺</span>
+          <p className="text-xs text-gray-400 mt-1">Step {step} of {TOTAL_STEPS}</p>
+        </div>
+
+        <ProgressBar step={step} />
+
+        {/* Step content */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          {step === 1 && (
+            <StepBasics data={basics} onChange={(patch) => setBasics(b => ({ ...b, ...patch }))} />
+          )}
+          {step === 2 && (
+            <StepMembers
+              members={members}
+              onAdd={(m) => setMembers(prev => [...prev, m])}
+              onRemove={(i) => setMembers(prev => prev.filter((_, idx) => idx !== i))}
+            />
+          )}
+          {step === 3 && (
+            <StepCooking data={cooking} onChange={(patch) => setCooking(c => ({ ...c, ...patch }))} />
+          )}
+        </div>
+
+        {/* Navigation */}
+        <div className="flex gap-3">
+          {step > 1 && (
+            <Button variant="outline" onClick={handleBack} className="flex-1">
+              Back
+            </Button>
+          )}
+          {step < TOTAL_STEPS ? (
+            <Button onClick={handleNext} disabled={isNextDisabled} className="flex-1">
+              Next
+            </Button>
+          ) : (
+            <Button onClick={handleFinish} className="flex-1">
+              Let&apos;s go!
+            </Button>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+export default OnboardingPage;
