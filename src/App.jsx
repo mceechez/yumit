@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import { getApiKey, getProfile } from './services/profile';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
@@ -36,6 +37,7 @@ function App() {
   // Normal app
   return (
     <BrowserRouter>
+      <Analytics />
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<HomePage />} />
