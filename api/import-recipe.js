@@ -1,43 +1,8 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
+// Vercel serverless function — scrapes a recipe URL server-side (avoids CORS),
+// then calls the Anthropic API to extract structured recipe data.
+const DEFAULT_SYSTEM =
+  'You are a household nutrition and grocery advisor. Location: UK — recommend UK supermarket products and brands only. All currency in GBP (£).';
 
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-
-// Resolves the API key: user-supplied header takes priority over env var
-function getApiKey(req) {
-  const key = req.headers['authorization']?.replace('Bearer ', '').trim() || process.env.CLAUDE_API_KEY;
-  if (!key) throw new Error('No API key configured. Please add your Anthropic API key in Settings.');
-  return key;
-}
-
-// ─── /api/claude — Anthropic proxy (mirrors api/claude.js Vercel function) ────
-app.post('/api/claude', async (req, res) => {
-  try {
-    const apiKey = getApiKey(req);
-    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(req.body),
-    });
-    const data = await upstream.json();
-    return res.status(upstream.status).json(data);
-  } catch (err) {
-    return res.status(err.message.includes('No API key') ? 401 : 500).json({ error: err.message });
-  }
-});
-
-// ─── /api/import-recipe — URL scraper + Anthropic proxy ───────────────────────
 const ALDI_PRODUCTS = [
   'Oranges', 'Chopped Tomatoes', 'Chicken Thigh Fillets', 'Frozen Coldwater Prawns',
   'Frozen Chips', 'Semi-Skimmed Milk', 'Free Range Eggs', 'White Sliced Bread',
@@ -60,13 +25,22 @@ function parseJson(text) {
   }
 }
 
-app.post('/api/import-recipe', async (req, res) => {
-  const { url, pastedText, systemPrompt } = req.body;
-  if (!url && !pastedText) return res.status(400).json({ error: 'URL or pasted text required' });
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-  let apiKey;
-  try { apiKey = getApiKey(req); } catch (err) {
-    return res.status(401).json({ error: err.message });
+  const { url, pastedText, systemPrompt } = req.body;
+  if (!url && !pastedText) {
+    return res.status(400).json({ error: 'URL or pasted text required' });
+  }
+
+  const apiKey =
+    req.headers['authorization']?.replace('Bearer ', '').trim() ||
+    process.env.CLAUDE_API_KEY;
+
+  if (!apiKey) {
+    return res.status(401).json({ error: 'No API key configured.' });
   }
 
   let recipeText = pastedText || '';
@@ -107,7 +81,6 @@ app.post('/api/import-recipe', async (req, res) => {
   }
 
   try {
-    const DEFAULT_SYSTEM = 'You are a household nutrition and grocery advisor. Location: UK — recommend UK supermarket products and brands only. All currency in GBP (£).';
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -169,13 +142,4 @@ Return ONLY the JSON object.`,
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
-});
-
-// ─── Health check ─────────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-app.listen(PORT, () => {
-  console.log(`Yumit API server running on port ${PORT}`);
-});
+}

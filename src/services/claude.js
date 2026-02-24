@@ -1,70 +1,306 @@
-// Claude API service — calls backend proxy endpoints
+// Claude API service — all requests go through /api/claude (Vercel serverless proxy).
+// The Anthropic API key is never exposed to the browser.
 import { getApiKey, getProfile } from './profile';
 import { buildSystemPrompt } from '../utils/systemPrompt';
 
-const API_BASE = '/api/claude';
+const MODEL = 'claude-sonnet-4-20250514';
 
-// Generic fetch wrapper — injects API key header and system prompt on every call
-async function apiCall(endpoint, data) {
-  const apiKey      = getApiKey();
-  const profile     = getProfile();
-  const systemPrompt = buildSystemPrompt(profile);
-
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-  };
-
+// Extracts JSON from Claude's response text, handling markdown code block wrappers.
+function parseJson(text) {
+  try { return JSON.parse(text); } catch {}
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/\{[\s\S]*\}/);
   try {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ...data, systemPrompt }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'API request failed');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error(`API error (${endpoint}):`, error);
-    throw error;
+    return JSON.parse(match ? (match[1] ?? match[0]).trim() : text);
+  } catch {
+    throw new Error('Could not read the response from Claude. Please try again.');
   }
 }
 
-// Parse a receipt image
+// POST a full Anthropic messages payload to /api/claude and return Claude's text response.
+async function claudeCall(payload) {
+  const apiKey = getApiKey();
+  const res = await fetch('/api/claude', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('The server returned an unexpected response. Please try again.');
+  }
+
+  if (!res.ok) {
+    const msg = data?.error?.message ||
+      (typeof data?.error === 'string' ? data.error : null) ||
+      `Request failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  const text = data?.content?.[0]?.text;
+  if (!text) {
+    throw new Error('Claude returned an empty response. Please try again.');
+  }
+  return text;
+}
+
+// ─── Parse a receipt image ────────────────────────────────────────────────────
 export async function parseReceipt(imageBase64, mediaType = 'image/jpeg') {
-  return apiCall('/parse-receipt', { image: imageBase64, mediaType });
+  const profile = getProfile();
+  const text = await claudeCall({
+    model: MODEL,
+    max_tokens: 2048,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: mediaType, data: imageBase64 },
+        },
+        {
+          type: 'text',
+          text: `Analyze this receipt image and extract all items with their prices.
+
+Return a JSON object with this exact structure:
+{
+  "items": [
+    {
+      "code": "NUMERIC_OR_TEXT_CODE",
+      "name": "Human readable name if determinable, otherwise same as code",
+      "quantity": 1,
+      "price": 0.00,
+      "nonFood": false
+    }
+  ],
+  "total": 0.00,
+  "date": "YYYY-MM-DD or null if not visible",
+  "store": "Store name/location if visible"
 }
 
-// Analyze nutrition of shopping basket
+IMPORTANT — Code extraction priority:
+1. FIRST look for 5-6 digit NUMERIC product codes (e.g., "852012", "830846", "701482")
+   - These appear as standalone numbers near the product description
+   - Numeric codes are the PRIMARY identifier — always include when visible
+2. If no numeric code is visible, use the TEXT abbreviation (e.g., "CKN THIGH FLIS")
+3. Include BOTH if both are visible (use numeric as the code, text as the name)
+
+Non-food detection:
+- Set nonFood: true for cleaning products, toiletries, pet food, candles, batteries, clothing, and similar non-edible items
+- Set nonFood: false for all food and drink items
+
+Other requirements:
+- Include ALL items, even if you're unsure what they are
+- Prices should be numbers (not strings)
+- Return ONLY the JSON object, no other text`,
+        },
+      ],
+    }],
+  });
+  return parseJson(text);
+}
+
+// ─── Analyze nutrition of shopping basket ─────────────────────────────────────
 export async function analyzeNutrition(items) {
-  return apiCall('/analyze-nutrition', { items });
+  const profile = getProfile();
+  const foodItems = items.filter(i => !i.nonFood);
+  const text = await claudeCall({
+    model: MODEL,
+    max_tokens: 1500,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Analyze the nutritional quality of this shopping basket for the household described in your system prompt.
+
+Shopping items:
+${foodItems.map(item => `- ${item.name || item.code} (£${item.price})`).join('\n')}
+
+Provide a JSON response:
+{
+  "score": 75,
+  "grade": "B",
+  "positives": ["Good protein variety with chicken and fish"],
+  "flags": ["High proportion of processed items"],
+  "gaps": ["Leafy greens", "Whole grains"],
+  "summary": "Brief 1-2 sentence summary tailored to this household"
 }
 
-// Generate batch cooking recipes
+Scoring: 80-100 (A) excellent, 60-79 (B) good, 40-59 (C) needs improvement, below 40 (D) poor.
+Tailor the flags and gaps specifically to the household's composition if provided.
+Return ONLY the JSON object.`,
+    }],
+  });
+  return parseJson(text);
+}
+
+// ─── Generate batch cooking recipes ──────────────────────────────────────────
 export async function generateBatchCooking(items) {
-  return apiCall('/batch-cooking', { items });
+  const profile = getProfile();
+  const text = await claudeCall({
+    model: MODEL,
+    max_tokens: 2500,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Create 2 batch cooking recipes using these ingredients.
+Scale each recipe to the household size and batch duration from the system prompt.
+Each recipe should be practical for the ages present in the household.
+
+Available ingredients:
+${items.map(item => `- ${item.name || item.code}`).join('\n')}
+
+Return a JSON response:
+{
+  "recipes": [
+    {
+      "name": "Recipe Name",
+      "description": "Brief description",
+      "servings": 8,
+      "prepTime": "20 mins",
+      "cookTime": "45 mins",
+      "ingredients": [
+        { "item": "Ingredient name", "amount": "500g", "fromShop": true }
+      ],
+      "instructions": ["Step 1", "Step 2"],
+      "tips": ["Storage tip", "Reheating tip"],
+      "kidFriendlyRating": 5
+    }
+  ]
 }
 
-// Get smart swap suggestions
+Make recipes that work for the household ages — familiar UK meals, kid-friendly where children are present.
+Return ONLY the JSON object.`,
+    }],
+  });
+  return parseJson(text);
+}
+
+// ─── Smart swap suggestions ───────────────────────────────────────────────────
 export async function getSmartSwaps(items) {
-  return apiCall('/smart-swaps', { items });
+  const profile = getProfile();
+  const text = await claudeCall({
+    model: MODEL,
+    max_tokens: 1500,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Suggest smart swaps for this shopping basket. Focus on healthier alternatives and savings relevant to the household in the system prompt.
+
+Current items:
+${items.map(item => `- ${item.name || item.code} (£${item.price})`).join('\n')}
+
+Return a JSON response:
+{
+  "swaps": [
+    {
+      "currentItem": "Current item name",
+      "suggestedItem": "Suggested alternative",
+      "reason": "Why this swap is better for this household",
+      "benefit": "health",
+      "estimatedSaving": 0.50
+    }
+  ],
+  "totalPotentialSaving": 2.50,
+  "healthImprovementTips": ["General tip relevant to this household"]
 }
 
-// Generate shopping list from meal preferences
+Focus on practical swaps available in the household's primary supermarket (from system prompt).
+Return ONLY the JSON object.`,
+    }],
+  });
+  return parseJson(text);
+}
+
+// ─── Generate weekly shopping list ───────────────────────────────────────────
 export async function generateShoppingList(options) {
-  return apiCall('/generate-shopping-list', options);
+  const { adultMeals, kidMeals, lastWeekMeals, budget } = options;
+  const profile = getProfile();
+  const text = await claudeCall({
+    model: MODEL,
+    max_tokens: 2500,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Generate a weekly shopping list for the household described in the system prompt.
+Budget: £${budget?.min || 90}–£${budget?.max || 120}
+
+Household's favourite meals:
+Adults: ${adultMeals?.join(', ') || 'Not specified'}
+Kids: ${kidMeals?.join(', ') || 'Not specified'}
+
+Meals to avoid (had last week):
+${lastWeekMeals?.join(', ') || 'None specified'}
+
+Rules:
+1. Select 4 batch cook meals from favourites (avoiding last week's)
+2. Scale each batch meal to household size and batch duration from system prompt
+3. Identify nutritional gaps for this specific household and add gap-filler items
+4. Stay within budget
+5. Organise items by aisle
+
+Return JSON:
+{
+  "selectedMeals": [
+    { "name": "Meal name", "days": ["Monday", "Tuesday"] }
+  ],
+  "shoppingList": {
+    "Fresh Produce": [{ "item": "Bananas", "quantity": "1 bunch", "estimatedPrice": 0.89 }],
+    "Meat & Fish": [],
+    "Dairy & Eggs": [],
+    "Bakery": [],
+    "Frozen": [],
+    "Cupboard Staples": [],
+    "Snacks & Treats": []
+  },
+  "gapFillers": [
+    { "item": "Spinach", "reason": "Added iron — good for the kids this week" }
+  ],
+  "estimatedTotal": 95.50,
+  "mealPlan": {
+    "Monday": "Spaghetti Bolognese",
+    "Tuesday": "Spaghetti Bolognese (leftover)",
+    "Wednesday": "Chicken Curry",
+    "Thursday": "Chicken Curry (leftover)",
+    "Friday": "Fish Fingers & Chips",
+    "Saturday": "Pizza Night",
+    "Sunday": "Roast Dinner"
+  }
 }
 
-// Import a recipe from a URL or pasted text
+Return ONLY the JSON object.`,
+    }],
+  });
+  return parseJson(text);
+}
+
+// ─── Import a recipe from a URL or pasted text ────────────────────────────────
+// Calls /api/import-recipe (separate endpoint) because URL scraping must be server-side.
 export async function importRecipe(url, pastedText) {
-  return apiCall('/import-recipe', { url, pastedText });
+  const apiKey = getApiKey();
+  const profile = getProfile();
+  const res = await fetch('/api/import-recipe', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify({ url, pastedText, systemPrompt: buildSystemPrompt(profile) }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Import failed');
+  }
+
+  return res.json();
 }
 
-// Check API health
+// ─── Health check ─────────────────────────────────────────────────────────────
 export async function checkHealth() {
   try {
     const response = await fetch('/api/health');
