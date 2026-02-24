@@ -57,37 +57,29 @@ export function ScanPage() {
 
     try {
       const totalImages = selectedFiles.length;
-      setProcessingStep(`Reading ${totalImages} image${totalImages > 1 ? 's' : ''}...`);
-
-      // Process all images
       const allItems = [];
       let total = 0;
       let date = null;
       let store = null;
 
       for (let i = 0; i < selectedFiles.length; i++) {
-        setProcessingStep(`Reading image ${i + 1} of ${totalImages}...`);
+        setProcessingStep(
+          totalImages > 1
+            ? `Reading receipt ${i + 1} of ${totalImages}...`
+            : 'Reading receipt...'
+        );
         const base64 = await fileToBase64(selectedFiles[i]);
         const mediaType = selectedFiles[i].type || 'image/jpeg';
 
         const result = await parseReceipt(base64, mediaType);
 
-        // Combine results
-        if (result.items) {
-          allItems.push(...result.items);
-        }
-        if (result.total && result.total > total) {
-          total = result.total; // Use the highest total (likely the final one)
-        }
-        if (result.date && !date) {
-          date = result.date;
-        }
-        if (result.store && !store) {
-          store = result.store;
-        }
+        if (result.items) allItems.push(...result.items);
+        if (result.total && result.total > total) total = result.total;
+        if (result.date && !date) date = result.date;
+        if (result.store && !store) store = result.store;
       }
 
-      // Translate codes using product dictionary
+      setProcessingStep('Translating codes...');
       const dictionary = getProductDictionary();
       const translatedItems = allItems.map(item => ({
         ...item,
@@ -95,15 +87,12 @@ export function ScanPage() {
         originalCode: item.code,
       }));
 
-      setParsedReceipt({
-        items: translatedItems,
-        total: total,
-        date: date,
-        store: store,
-      });
+      setParsedReceipt({ items: translatedItems, total, date, store });
+      setProcessingStep('');
       setStep('parsed');
     } catch (err) {
       console.error('Failed to parse receipt:', err);
+      setProcessingStep('');
     }
   };
 
@@ -127,37 +116,26 @@ export function ScanPage() {
   const handleAnalyze = async () => {
     if (!parsedReceipt) return;
 
-    try {
-      // Run all analyses in parallel
-      setProcessingStep('Analyzing nutrition...');
-      const nutritionPromise = analyzeNutrition(parsedReceipt.items.map(i => ({
-        name: i.translatedName || i.name,
-        code: i.code,
-        price: i.price,
-      })));
+    const allItems = parsedReceipt.items.map(i => ({
+      name: i.translatedName || i.name,
+      code: i.code,
+      price: i.price,
+      nonFood: i.nonFood,
+    }));
 
-      setProcessingStep('Generating batch cooking plan...');
-      const cookingPromise = generateBatchCooking(parsedReceipt.items.map(i => ({
-        name: i.translatedName || i.name,
-        code: i.code,
-      })));
+    try {
+      setProcessingStep('Scoring nutrition...');
+      const nutrition = await analyzeNutrition(allItems);
+      setNutritionAnalysis(nutrition);
+
+      setProcessingStep('Building recipes...');
+      const cooking = await generateBatchCooking(allItems.map(({ name, code }) => ({ name, code })));
+      setBatchCooking(cooking);
 
       setProcessingStep('Finding smart swaps...');
-      const swapsPromise = getSmartSwaps(parsedReceipt.items.map(i => ({
-        name: i.translatedName || i.name,
-        code: i.code,
-        price: i.price,
-      })));
-
-      const [nutrition, cooking, swaps] = await Promise.all([
-        nutritionPromise,
-        cookingPromise,
-        swapsPromise,
-      ]);
-
-      setNutritionAnalysis(nutrition);
-      setBatchCooking(cooking);
+      const swaps = await getSmartSwaps(allItems);
       setSmartSwaps(swaps);
+
       setStep('analyzed');
       setProcessingStep('');
     } catch (err) {
@@ -213,6 +191,14 @@ export function ScanPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold text-gray-900">Scan Receipt</h2>
+
+      {/* Step indicator — visible whenever a background step is running */}
+      {processingStep && (
+        <div className="flex items-center gap-3 bg-basket-green-50 border border-basket-green-200 rounded-xl px-4 py-3">
+          <div className="w-4 h-4 border-2 border-basket-green-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="text-sm font-medium text-basket-green-700">{processingStep}</span>
+        </div>
+      )}
 
       {/* Upload Step */}
       {step === 'upload' && (
@@ -283,6 +269,19 @@ export function ScanPage() {
               <p className="text-xs text-gray-400">
                 {imagePreviews.length} photo{imagePreviews.length > 1 ? 's' : ''} selected
               </p>
+            )}
+
+            {/* Tips — shown when no images have been added yet */}
+            {imagePreviews.length === 0 && (
+              <div className="text-left bg-gray-50 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-600">Tips for best results</p>
+                <ul className="space-y-1.5 text-xs text-gray-500">
+                  <li>Lay receipt flat on a dark surface</li>
+                  <li>Ensure all text is in frame</li>
+                  <li>Good lighting, no shadows across the text</li>
+                  <li>If receipt is long, use the + Add More option</li>
+                </ul>
+              </div>
             )}
           </div>
         </Card>
@@ -361,10 +360,10 @@ export function ScanPage() {
             <Button
               onClick={handleAnalyze}
               loading={loading}
-              disabled={loading}
+              disabled={loading || !!processingStep}
               className="flex-1"
             >
-              {loading ? processingStep : 'Analyze & Plan'}
+              Analyze & Plan
             </Button>
           </div>
         </div>

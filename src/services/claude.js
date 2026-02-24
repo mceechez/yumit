@@ -5,14 +5,37 @@ import { buildSystemPrompt } from '../utils/systemPrompt';
 
 const MODEL = 'claude-sonnet-4-20250514';
 
-// Extracts JSON from Claude's response text, handling markdown code block wrappers.
+// Extracts JSON from Claude's response text with several fallback strategies.
 function parseJson(text) {
+  // 1. Direct parse
   try { return JSON.parse(text); } catch {}
-  const match = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/\{[\s\S]*\}/);
+
+  // 2. Extract from markdown code block, with and without trailing-comma fix
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlock) {
+    try { return JSON.parse(codeBlock[1].trim()); } catch {}
+    try { return JSON.parse(codeBlock[1].trim().replace(/,\s*([}\]])/g, '$1')); } catch {}
+  }
+
+  // 3. Find outermost { } block, with and without trailing-comma fix
+  const objMatch = text.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try { return JSON.parse(objMatch[0]); } catch {}
+    try { return JSON.parse(objMatch[0].replace(/,\s*([}\]])/g, '$1')); } catch {}
+  }
+
+  throw new Error('Could not read the response from Claude. Please try again.');
+}
+
+// Call /api/claude, parse the JSON response, and retry the full API call once if parsing fails.
+async function claudeCallParsed(payload) {
+  const text = await claudeCall(payload);
   try {
-    return JSON.parse(match ? (match[1] ?? match[0]).trim() : text);
+    return parseJson(text);
   } catch {
-    throw new Error('Could not read the response from Claude. Please try again.');
+    // First parse failed — retry the API call before giving up
+    const retryText = await claudeCall(payload);
+    return parseJson(retryText);
   }
 }
 
@@ -52,20 +75,14 @@ async function claudeCall(payload) {
 // ─── Parse a receipt image ────────────────────────────────────────────────────
 export async function parseReceipt(imageBase64, mediaType = 'image/jpeg') {
   const profile = getProfile();
-  const text = await claudeCall({
-    model: MODEL,
-    max_tokens: 2048,
-    system: buildSystemPrompt(profile),
-    messages: [{
-      role: 'user',
-      content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mediaType, data: imageBase64 },
-        },
-        {
-          type: 'text',
-          text: `Analyze this receipt image and extract all items with their prices.
+  const system = buildSystemPrompt(profile);
+
+  const imageContent = {
+    type: 'image',
+    source: { type: 'base64', media_type: mediaType, data: imageBase64 },
+  };
+
+  const extractionPrompt = `Analyze this receipt image and extract all items with their prices.
 
 Return a JSON object with this exact structure:
 {
@@ -97,19 +114,62 @@ Non-food detection:
 Other requirements:
 - Include ALL items, even if you're unsure what they are
 - Prices should be numbers (not strings)
-- Return ONLY the JSON object, no other text`,
-        },
-      ],
-    }],
+- Return ONLY the JSON object, no other text`;
+
+  const result = await claudeCallParsed({
+    model: MODEL,
+    max_tokens: 2048,
+    system,
+    messages: [{ role: 'user', content: [imageContent, { type: 'text', text: extractionPrompt }] }],
   });
-  return parseJson(text);
+
+  // Long receipt: if 40+ items were found, make a second pass to catch any that were missed.
+  if (result.items?.length >= 40) {
+    const knownCodes = result.items.map(i => i.code).join(', ');
+    try {
+      const supplement = await claudeCallParsed({
+        model: MODEL,
+        max_tokens: 1024,
+        system,
+        messages: [{
+          role: 'user',
+          content: [
+            imageContent,
+            {
+              type: 'text',
+              text: `These items have already been extracted from this receipt:
+${knownCodes}
+
+Look for any remaining items NOT in this list — items that may appear lower down or were missed on the first pass.
+
+Return a JSON object:
+{
+  "items": [...any missed items only, using the same structure as before...],
+  "total": null
+}
+
+If no items were missed, return: {"items": [], "total": null}
+Return ONLY the JSON object.`,
+            },
+          ],
+        }],
+      });
+      if (supplement.items?.length > 0) {
+        result.items = [...result.items, ...supplement.items];
+      }
+    } catch {
+      // Second pass failed — proceed with what we have
+    }
+  }
+
+  return result;
 }
 
 // ─── Analyze nutrition of shopping basket ─────────────────────────────────────
 export async function analyzeNutrition(items) {
   const profile = getProfile();
   const foodItems = items.filter(i => !i.nonFood);
-  const text = await claudeCall({
+  return claudeCallParsed({
     model: MODEL,
     max_tokens: 1500,
     system: buildSystemPrompt(profile),
@@ -135,13 +195,12 @@ Tailor the flags and gaps specifically to the household's composition if provide
 Return ONLY the JSON object.`,
     }],
   });
-  return parseJson(text);
 }
 
 // ─── Generate batch cooking recipes ──────────────────────────────────────────
 export async function generateBatchCooking(items) {
   const profile = getProfile();
-  const text = await claudeCall({
+  return claudeCallParsed({
     model: MODEL,
     max_tokens: 2500,
     system: buildSystemPrompt(profile),
@@ -177,13 +236,12 @@ Make recipes that work for the household ages — familiar UK meals, kid-friendl
 Return ONLY the JSON object.`,
     }],
   });
-  return parseJson(text);
 }
 
 // ─── Smart swap suggestions ───────────────────────────────────────────────────
 export async function getSmartSwaps(items) {
   const profile = getProfile();
-  const text = await claudeCall({
+  return claudeCallParsed({
     model: MODEL,
     max_tokens: 1500,
     system: buildSystemPrompt(profile),
@@ -213,14 +271,13 @@ Focus on practical swaps available in the household's primary supermarket (from 
 Return ONLY the JSON object.`,
     }],
   });
-  return parseJson(text);
 }
 
 // ─── Generate weekly shopping list ───────────────────────────────────────────
 export async function generateShoppingList(options) {
   const { adultMeals, kidMeals, lastWeekMeals, budget } = options;
   const profile = getProfile();
-  const text = await claudeCall({
+  return claudeCallParsed({
     model: MODEL,
     max_tokens: 2500,
     system: buildSystemPrompt(profile),
@@ -275,7 +332,6 @@ Return JSON:
 Return ONLY the JSON object.`,
     }],
   });
-  return parseJson(text);
 }
 
 // ─── Import a recipe from a URL or pasted text ────────────────────────────────
