@@ -387,6 +387,35 @@ export async function importRecipe(url, pastedText) {
   };
 }
 
+// ─── Research-augmented nutrition scoring (uses web search) ───────────────────
+export async function researchNutrition(items) {
+  const profile = getProfile();
+  const hasChildren = profile?.members?.some(m =>
+    ['toddler', 'child-5-10', 'young-teen'].includes(m.lifeStage)
+  ) ?? false;
+
+  const foodItems = items.filter(i => !i.nonFood);
+
+  const res = await fetch('/api/nutrition-research', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items: foodItems.map(i => ({ name: i.name || i.code, price: i.price })),
+      systemPrompt: buildSystemPrompt(profile),
+      hasChildren,
+    }),
+  });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('Unexpected response from nutrition research. Please try again.');
+  }
+  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+  return data;
+}
+
 // ─── Search scrape-friendly sites for an alternative recipe URL ───────────────
 export async function findRecipeAlternatives(recipeName) {
   try {

@@ -76,6 +76,20 @@ export function useClaudeAI() {
     }
   }, []);
 
+  const researchNutrition = useCallback(async (items) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await claudeService.researchNutrition(items);
+      return result;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const importRecipe = useCallback(async (url, pastedText) => {
     setLoading(true);
     setError(null);
@@ -100,6 +114,7 @@ export function useClaudeAI() {
     clearError,
     parseReceipt,
     analyzeNutrition,
+    researchNutrition,
     generateBatchCooking,
     getSmartSwaps,
     generateShoppingList,

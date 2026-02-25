@@ -6,14 +6,69 @@ import { Badge, GradeBadge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { useClaudeAI } from '../hooks/useClaudeAI';
+import {
+  researchNutrition,
+  generateBatchCooking as batchCookingService,
+  getSmartSwaps as swapsService,
+} from '../services/claude';
 import { translateCode } from '../data/productDictionary';
 import { formatPrice } from '../utils/formatters';
 import { getProductDictionary, addProductTranslation, addShoppingTrip } from '../services/storage';
 
+// ─── "What the science says" collapsible ─────────────────────────────────────
+function ScienceInsights({ insights }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-4 border-t border-gray-100 pt-3">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center justify-between w-full text-left"
+      >
+        <span className="text-sm font-semibold text-blue-700">What the science says</span>
+        <span className="text-blue-400 text-xs">{open ? '▲ hide' : '▼ show'}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          {insights.map((insight, i) => (
+            <div key={i} className="bg-blue-50 rounded-xl p-3 space-y-1">
+              <p className="text-sm font-semibold text-blue-900">{insight.heading}</p>
+              <p className="text-sm text-blue-800 leading-relaxed">{insight.body}</p>
+              {insight.source && (
+                <p className="text-xs text-blue-500">{insight.source}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── "Good for the kids" section ─────────────────────────────────────────────
+function KidsInsights({ insights }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-semibold text-orange-800">Good for the kids</p>
+      {insights.map((insight, i) => (
+        <div key={i} className="flex items-start gap-3">
+          <span className="text-lg flex-shrink-0">👶</span>
+          <div>
+            <p className="text-sm font-medium text-gray-900">{insight.food}</p>
+            <p className="text-sm text-gray-700 leading-relaxed">{insight.benefit}</p>
+            {insight.source && (
+              <p className="text-xs text-gray-400 mt-0.5">{insight.source}</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ScanPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
-  const { loading, error, parseReceipt, analyzeNutrition, generateBatchCooking, getSmartSwaps } = useClaudeAI();
+  const { loading, error, parseReceipt } = useClaudeAI();
 
   const [step, setStep] = useState('upload'); // upload, parsed, analyzed
   const [imagePreviews, setImagePreviews] = useState([]); // Support multiple images
@@ -124,16 +179,16 @@ export function ScanPage() {
     }));
 
     try {
-      setProcessingStep('Scoring nutrition...');
-      const nutrition = await analyzeNutrition(allItems);
+      // Run all three in parallel — nutrition research, recipes, and swaps start together.
+      // Research takes longest (web search), so parallelism keeps total wait time down.
+      setProcessingStep('Researching your shop — this takes a moment…');
+      const [nutrition, cooking, swaps] = await Promise.all([
+        researchNutrition(allItems),
+        batchCookingService(allItems.map(({ name, code }) => ({ name, code }))),
+        swapsService(allItems),
+      ]);
       setNutritionAnalysis(nutrition);
-
-      setProcessingStep('Building recipes...');
-      const cooking = await generateBatchCooking(allItems.map(({ name, code }) => ({ name, code })));
       setBatchCooking(cooking);
-
-      setProcessingStep('Finding smart swaps...');
-      const swaps = await getSmartSwaps(allItems);
       setSmartSwaps(swaps);
 
       setStep('analyzed');
@@ -435,6 +490,18 @@ export function ScanPage() {
                   </div>
                 </div>
               )}
+
+              {/* What the science says — collapsible, only when insights present */}
+              {nutritionAnalysis.insights?.length > 0 && (
+                <ScienceInsights insights={nutritionAnalysis.insights} />
+              )}
+            </Card>
+          )}
+
+          {/* Good for the kids — separate card, only when kidsInsights present */}
+          {nutritionAnalysis?.kidsInsights?.length > 0 && (
+            <Card className="bg-orange-50 border-orange-100">
+              <KidsInsights insights={nutritionAnalysis.kidsInsights} />
             </Card>
           )}
 
