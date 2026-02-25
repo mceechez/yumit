@@ -211,12 +211,12 @@ export async function generateBatchCooking(items) {
   const profile = getProfile();
   return claudeCallParsed({
     model: MODEL,
-    max_tokens: 2500,
+    max_tokens: 4000,
     system: buildSystemPrompt(profile),
     messages: [{
       role: 'user',
       content: `Create 2 batch cooking recipes using these ingredients.
-Scale each recipe to the household size and batch duration from the system prompt.
+Scale each recipe to the household size × daysPerBatch from the system prompt (this is the "portions" value).
 Each recipe should be practical for the ages present in the household.
 
 Available ingredients:
@@ -226,22 +226,34 @@ Return a JSON response:
 {
   "recipes": [
     {
-      "name": "Recipe Name",
+      "name": "Creamy Chicken and Vegetable Pasta Bake",
       "description": "Brief description",
-      "servings": 8,
-      "prepTime": "20 mins",
-      "cookTime": "45 mins",
+      "portions": 8,
+      "prepTime": "25 mins",
+      "cookTime": "35 mins",
       "ingredients": [
-        { "item": "Ingredient name", "amount": "500g", "fromShop": true }
+        { "amount": "600g", "item": "chicken thighs" },
+        { "amount": "400g", "item": "penne pasta" }
       ],
-      "instructions": ["Step 1", "Step 2"],
-      "tips": ["Storage tip", "Reheating tip"],
-      "kidFriendlyRating": 5
+      "method": [
+        { "step": 1, "instruction": "Preheat oven to 200°C (fan 180°C, gas mark 6)." },
+        { "step": 2, "instruction": "Cook pasta in salted boiling water until al dente, then drain." }
+      ],
+      "equipment": ["large roasting dish", "saucepan", "colander"],
+      "storage": "Keeps in fridge for 3 days. Freeze in portions — reheat covered at 180°C for 20 mins.",
+      "nutritionHighlight": "High protein, good source of vitamin C"
     }
   ]
 }
 
-Make recipes that work for the household ages — familiar UK meals, kid-friendly where children are present.
+CRITICAL rules:
+- "method" MUST be an array of {step, instruction} objects — never plain strings, never empty
+- Include every step in full — do not summarise or skip steps
+- "ingredients" MUST include exact amounts — no ingredient without a quantity
+- "equipment" — list every item of kit needed beyond everyday utensils (e.g. large roasting dish, colander, baking paper)
+- "storage" — include fridge shelf life, whether it freezes well, and reheating instructions
+- "portions" = household size × daysPerBatch from the system prompt
+- Make recipes familiar UK meals, kid-friendly where children are present
 Return ONLY the JSON object.`,
     }],
   });

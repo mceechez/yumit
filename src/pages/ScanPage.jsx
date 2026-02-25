@@ -13,7 +13,8 @@ import {
 } from '../services/claude';
 import { translateCode } from '../data/productDictionary';
 import { formatPrice } from '../utils/formatters';
-import { getProductDictionary, addProductTranslation, addShoppingTrip } from '../services/storage';
+import { getProductDictionary, addProductTranslation, addShoppingTrip, saveFavouriteRecipe, addMeal } from '../services/storage';
+import RecipeDetailPage from './RecipeDetailPage';
 
 // ─── "What the science says" collapsible ─────────────────────────────────────
 function ScienceInsights({ insights }) {
@@ -77,6 +78,10 @@ export function ScanPage() {
   const [batchCooking, setBatchCooking] = useState(null);
   const [smartSwaps, setSmartSwaps] = useState(null);
   const [processingStep, setProcessingStep] = useState('');
+
+  // Batch recipe detail overlay
+  const [selectedBatchRecipe, setSelectedBatchRecipe] = useState(null);
+  const [savedBatchRecipes, setSavedBatchRecipes] = useState(new Set());
 
   // Modal for adding new product translations
   const [showAddModal, setShowAddModal] = useState(false);
@@ -197,6 +202,23 @@ export function ScanPage() {
       console.error('Analysis failed:', err);
       setProcessingStep('');
     }
+  };
+
+  const handleSaveBatchRecipe = (recipe) => {
+    saveFavouriteRecipe({
+      name: recipe.name,
+      servings: recipe.portions || recipe.servings,
+      prepTime: recipe.prepTime,
+      cookTime: recipe.cookTime,
+      ingredients: recipe.ingredients,
+      method: recipe.method,
+      equipment: recipe.equipment,
+      storage: recipe.storage,
+      nutritionHighlight: recipe.nutritionHighlight,
+      mealType: 'adults',
+    });
+    addMeal('adults', recipe.name);
+    setSavedBatchRecipes(prev => new Set(prev).add(recipe.name));
   };
 
   const handleSaveTrip = () => {
@@ -510,19 +532,29 @@ export function ScanPage() {
             <Card>
               <CardTitle>Batch Cooking Plan</CardTitle>
               <p className="text-sm text-gray-500 mb-3">
-                2 recipes to cook this week, each feeds 4 for 2 days
+                Tap a recipe for ingredients, full method, and cook mode
               </p>
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {batchCooking.recipes.map((recipe, index) => (
-                  <div key={index} className="p-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold text-gray-900">{recipe.name}</h4>
-                      <Badge variant="primary">{recipe.servings} portions</Badge>
+                  <div
+                    key={index}
+                    onClick={() => setSelectedBatchRecipe(recipe)}
+                    className="p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-basket-green-50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between mb-2 gap-2">
+                      <h4 className="font-semibold text-gray-900 leading-snug">{recipe.name}</h4>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {savedBatchRecipes.has(recipe.name) && (
+                          <span className="text-xs text-basket-green-600 font-medium">Saved ✓</span>
+                        )}
+                        <Badge variant="primary">{recipe.portions || recipe.servings} portions</Badge>
+                      </div>
                     </div>
                     <p className="text-sm text-gray-600 mb-2">{recipe.description}</p>
                     <div className="flex gap-4 text-xs text-gray-500">
                       <span>Prep: {recipe.prepTime}</span>
                       <span>Cook: {recipe.cookTime}</span>
+                      <span className="ml-auto text-basket-green-600">Tap for full recipe →</span>
                     </div>
                   </div>
                 ))}
@@ -574,6 +606,22 @@ export function ScanPage() {
         <Card className="bg-red-50 border-red-200">
           <p className="text-red-700 text-sm">{error}</p>
         </Card>
+      )}
+
+      {/* Batch recipe detail overlay */}
+      {selectedBatchRecipe && (
+        <RecipeDetailPage
+          recipe={selectedBatchRecipe}
+          onBack={() => setSelectedBatchRecipe(null)}
+          onSave={
+            savedBatchRecipes.has(selectedBatchRecipe.name)
+              ? undefined
+              : () => {
+                  handleSaveBatchRecipe(selectedBatchRecipe);
+                  setSelectedBatchRecipe(null);
+                }
+          }
+        />
       )}
 
       {/* Add Translation Modal */}
