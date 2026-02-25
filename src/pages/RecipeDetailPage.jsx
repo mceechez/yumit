@@ -3,19 +3,29 @@
 export function RecipeDetailPage({ recipe, onBack }) {
   if (!recipe) return null;
 
-  // Normalise step list — Claude may return:
-  //   method: [{step, instruction}, ...]   ← expected import format
-  //   method: ["step text", ...]           ← Claude occasionally returns strings
-  //   instructions: ["step text", ...]     ← batch cooking format
-  const steps = [];
-  if (recipe.method?.length) {
-    for (const m of recipe.method) {
-      if (typeof m === 'string') steps.push(m);
-      else if (m?.instruction) steps.push(m.instruction);
-    }
-  } else if (recipe.instructions?.length) {
-    steps.push(...recipe.instructions);
+  // Normalise step list — handles every format Claude may return:
+  //   method: ["step text", ...]              ← current expected format (plain strings)
+  //   method: [{step, instruction}, ...]      ← old object format
+  //   method: [{step, text|description}, ...] ← Claude variant field names
+  //   instructions: ["step text", ...]        ← batch cooking format
+  //   steps: ["step text", ...]               ← another Claude variant
+  function extractText(m) {
+    if (typeof m === 'string') return m.trim();
+    if (!m || typeof m !== 'object') return '';
+    // Try every field name Claude has been known to use
+    const text = m.instruction || m.text || m.description || m.content || m.step || m.value || '';
+    // If the value itself is an object (nested), stringify it as a last resort
+    if (typeof text === 'object') return JSON.stringify(text);
+    return String(text).trim();
   }
+
+  const rawSteps =
+    (Array.isArray(recipe.method) && recipe.method.length > 0 ? recipe.method : null) ||
+    (Array.isArray(recipe.instructions) && recipe.instructions.length > 0 ? recipe.instructions : null) ||
+    (Array.isArray(recipe.steps) && recipe.steps.length > 0 ? recipe.steps : null) ||
+    [];
+
+  const steps = rawSteps.map(extractText).filter(Boolean);
 
   // Normalise ingredient display — Claude may use "amount"+"unit"+"item" (new)
   // or "quantity"+"item" (old field names) or "amount"+"item" (no unit).

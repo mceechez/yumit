@@ -113,6 +113,8 @@ app.post('/api/import-recipe', async (req, res) => {
           role: 'user',
           content: `You are extracting a recipe. This is critical — you MUST include exact quantities and units for every ingredient (e.g. "300", "g", "penne pasta" or "2", "tbsp", "vegetable oil"). You MUST include every numbered instruction step in full. Do not return an ingredient without a quantity. Do not return an empty method list. If you cannot find quantities or steps in the content provided, explicitly say the data is missing rather than returning empty fields.
 
+The method/instructions field is the most important part. Extract every single numbered step exactly as written. Return them as an array of strings. If you see steps numbered 1, 2, 3 on the page, return all of them. Never return an empty method array.
+
 Extract the complete recipe from the following text:
 
 ${recipeText}
@@ -129,8 +131,9 @@ Return ONLY a JSON object with this exact structure:
     { "amount": "1", "unit": "", "item": "onion, finely chopped" }
   ],
   "method": [
-    { "step": 1, "instruction": "Bring a large pan of salted water to the boil and cook the pasta according to packet instructions." },
-    { "step": 2, "instruction": "Meanwhile, heat the oil in a frying pan over medium heat." }
+    "Bring a large pan of salted water to the boil and cook the pasta according to packet instructions.",
+    "Meanwhile, heat the oil in a frying pan over medium heat.",
+    "Add the onion and cook for 5 minutes until softened."
   ],
   "sourceName": "Website or publication name (e.g. BBC Good Food, Jamie Oliver)"
 }
@@ -142,10 +145,10 @@ CRITICAL rules for ingredients:
 - You MUST include ALL ingredients with their quantities — an ingredient without an amount is an error
 
 CRITICAL rules for method:
-- You MUST copy ALL numbered steps from the recipe in full
-- Do not summarise, merge, or skip any steps
-- The method array MUST NOT be empty if the recipe contains instructions
-- Each instruction must be a complete sentence
+- "method" MUST be an array of plain strings — one string per step, no objects, no step numbers
+- Copy every step from the recipe in full — do not summarise, merge, or skip any steps
+- The method array MUST NOT be empty if the recipe has any instructions at all
+- Include every single numbered or bulleted step you can find in the text
 
 Return ONLY the JSON object.`,
         }],
@@ -169,6 +172,10 @@ Return ONLY the JSON object.`,
 
     try {
       const parsedData = parseJson(responseText);
+      // Log extraction results so we can verify method steps are captured
+      console.log('[import-recipe] name:', parsedData.name);
+      console.log('[import-recipe] ingredients count:', parsedData.ingredients?.length ?? 0);
+      console.log('[import-recipe] method raw:', JSON.stringify(parsedData.method ?? parsedData.instructions ?? null));
       return res.json({ ...parsedData, scrapable: scrapedOk });
     } catch (err) {
       return res.status(502).json({ error: err.message });
