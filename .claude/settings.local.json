@@ -7,7 +7,8 @@
       "Bash(npm run dev:*)",
       "Bash(node:*)",
       "Bash(curl:*)",
-      "Bash(echo no process on 3001:2)"
+      "Bash(echo no process on 3001:2)",
+      "Bash(cd:*)"
     ]
   }
 }

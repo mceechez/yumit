@@ -3,18 +3,6 @@
 const DEFAULT_SYSTEM =
   'You are a household nutrition and grocery advisor. Location: UK — recommend UK supermarket products and brands only. All currency in GBP (£).';
 
-const ALDI_PRODUCTS = [
-  'Oranges', 'Chopped Tomatoes', 'Chicken Thigh Fillets', 'Frozen Coldwater Prawns',
-  'Frozen Chips', 'Semi-Skimmed Milk', 'Free Range Eggs', 'White Sliced Bread',
-  'Mild Cheddar', 'Basmati Rice', 'Penne Pasta', 'Extra Virgin Olive Oil',
-  'Diced Beef', 'Pork Mince', 'Beef Mince', 'Salmon Fillets', 'Broccoli',
-  'Carrots', 'White Potatoes', 'Brown Onions', 'Garlic', 'Bananas', 'Apples',
-  'Cucumber', 'Vine Tomatoes', 'Mixed Peppers', 'Greek Yogurt', 'Salted Butter',
-  'Mature Cheddar', 'Fish Fingers', 'Frozen Garden Peas', 'Frozen Sweetcorn',
-  'Baked Beans', 'Mackerel Fillets', 'Cauliflower', 'Aubergine', 'Strawberries',
-  'Pork Shoulder Steaks', 'Cod Fillets',
-].join(', ');
-
 function parseJson(text) {
   try { return JSON.parse(text); } catch {}
   const match = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/\{[\s\S]*\}/);
@@ -35,12 +23,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'URL or pasted text required' });
   }
 
-  const apiKey =
-    req.headers['authorization']?.replace('Bearer ', '').trim() ||
-    process.env.CLAUDE_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
 
   if (!apiKey) {
-    return res.status(401).json({ error: 'No API key configured.' });
+    return res.status(500).json({ error: 'Server is not configured with an API key. Please set ANTHROPIC_API_KEY in the server environment.' });
   }
 
   let recipeText = pastedText || '';
@@ -90,29 +76,49 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 3000,
         system: systemPrompt || DEFAULT_SYSTEM,
         messages: [{
           role: 'user',
-          content: `Extract the recipe from the following text.
+          content: `You are extracting a recipe. This is critical — you MUST include exact quantities and units for every ingredient (e.g. "300", "g", "penne pasta" or "2", "tbsp", "vegetable oil"). You MUST include every numbered instruction step in full. Do not return an ingredient without a quantity. Do not return an empty method list. If you cannot find quantities or steps in the content provided, explicitly say the data is missing rather than returning empty fields.
+
+The method/instructions field is the most important part. Extract every single numbered step exactly as written. Return them as an array of strings. If you see steps numbered 1, 2, 3 on the page, return all of them. Never return an empty method array.
+
+Extract the complete recipe from the following text:
 
 ${recipeText}
 
-Known products available in store:
-${ALDI_PRODUCTS}
-
-Return ONLY a JSON object:
+Return ONLY a JSON object with this exact structure:
 {
   "name": "Recipe name",
   "servings": 4,
   "prepTime": "15 mins",
   "cookTime": "30 mins",
   "ingredients": [
-    { "item": "ingredient name", "quantity": "500g", "aldiProduct": "closest store product or null" }
-  ]
+    { "amount": "300", "unit": "g", "item": "penne pasta" },
+    { "amount": "2", "unit": "tbsp", "item": "vegetable oil" },
+    { "amount": "1", "unit": "", "item": "onion, finely chopped" }
+  ],
+  "method": [
+    "Bring a large pan of salted water to the boil and cook the pasta according to packet instructions.",
+    "Meanwhile, heat the oil in a frying pan over medium heat.",
+    "Add the onion and cook for 5 minutes until softened."
+  ],
+  "sourceName": "Website or publication name (e.g. BBC Good Food, Jamie Oliver)"
 }
 
-For "aldiProduct": match to the closest item from the store products list if it's a clear match. Set null for spices, condiments, or items not in the list.
+CRITICAL rules for ingredients:
+- "amount": the EXACT numeric quantity from the recipe as a string — NEVER leave this empty if a quantity appears
+- "unit": the measurement unit (g, ml, tbsp, tsp, cloves, pieces, etc.) — use "" only if there is truly no unit
+- "item": ingredient name only, no quantity or unit included
+- You MUST include ALL ingredients with their quantities — an ingredient without an amount is an error
+
+CRITICAL rules for method:
+- "method" MUST be an array of plain strings — one string per step, no objects, no step numbers
+- Copy every step from the recipe in full — do not summarise, merge, or skip any steps
+- The method array MUST NOT be empty if the recipe has any instructions at all
+- Include every single numbered or bulleted step you can find in the text
+
 Return ONLY the JSON object.`,
         }],
       }),
@@ -135,6 +141,9 @@ Return ONLY the JSON object.`,
 
     try {
       const parsedData = parseJson(responseText);
+      console.log('[import-recipe] name:', parsedData.name);
+      console.log('[import-recipe] ingredients count:', parsedData.ingredients?.length ?? 0);
+      console.log('[import-recipe] method raw:', JSON.stringify(parsedData.method ?? parsedData.instructions ?? null));
       return res.json({ ...parsedData, scrapable: scrapedOk });
     } catch (err) {
       return res.status(502).json({ error: err.message });

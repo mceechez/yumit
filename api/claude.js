@@ -5,13 +5,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey =
-    req.headers['authorization']?.replace('Bearer ', '').trim() ||
-    process.env.CLAUDE_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
 
   if (!apiKey) {
-    return res.status(401).json({
-      error: 'No API key configured. Please add your Anthropic API key in Settings.',
+    return res.status(500).json({
+      error: 'Server is not configured with an API key. Please set ANTHROPIC_API_KEY in the server environment.',
     });
   }
 

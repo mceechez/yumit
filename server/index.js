@@ -11,17 +11,17 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Resolves the API key: user-supplied header takes priority over env var
-function getApiKey(req) {
-  const key = req.headers['authorization']?.replace('Bearer ', '').trim() || process.env.CLAUDE_API_KEY;
-  if (!key) throw new Error('No API key configured. Please add your Anthropic API key in Settings.');
+// Resolves the API key from the server environment.
+function getApiKey() {
+  const key = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+  if (!key) throw new Error('Server is not configured with an API key. Please set ANTHROPIC_API_KEY in the server environment.');
   return key;
 }
 
 // ─── /api/claude — Anthropic proxy (mirrors api/claude.js Vercel function) ────
 app.post('/api/claude', async (req, res) => {
   try {
-    const apiKey = getApiKey(req);
+    const apiKey = getApiKey();
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -55,7 +55,7 @@ app.post('/api/import-recipe', async (req, res) => {
   if (!url && !pastedText) return res.status(400).json({ error: 'URL or pasted text required' });
 
   let apiKey;
-  try { apiKey = getApiKey(req); } catch (err) {
+  try { apiKey = getApiKey(); } catch (err) {
     return res.status(401).json({ error: err.message });
   }
 

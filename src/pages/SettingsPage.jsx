@@ -14,15 +14,8 @@ import {
 } from '../services/storage';
 import {
   getProfile, saveProfile, clearProfile,
-  getApiKey, saveApiKey, removeApiKey,
   getUsage, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS,
 } from '../services/profile';
-
-// ─── Small helper: masked API key display ─────────────────────────────────────
-function maskKey(key) {
-  if (!key) return '';
-  return key.substring(0, 12) + '••••••••' + key.slice(-4);
-}
 
 // ─── Inline member form (reused from Onboarding) ─────────────────────────────
 function MemberForm({ initial, onSave, onCancel }) {
@@ -92,7 +85,6 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   const [dictionary, setDictionary]   = useState(getProductDictionary());
   const [settings, setSettings]       = useState(getSettings());
   const [savedRecipes, setSavedRecipes] = useState(getFavouriteRecipes());
-  const currentApiKey                 = getApiKey();
   const usage                         = getUsage();
 
   // Profile editing modal
@@ -101,11 +93,6 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
 
   // Members
   const [showMemberForm, setShowMemberForm]       = useState(false);
-
-  // API Key modal
-  const [showApiKeyModal, setShowApiKeyModal]     = useState(false);
-  const [newApiKey, setNewApiKey]                 = useState('');
-  const [apiKeyError, setApiKeyError]             = useState('');
 
   // Meal modals
   const [showAddMealModal, setShowAddMealModal]   = useState(false);
@@ -152,25 +139,6 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
     setEditProfile(p => ({ ...p, members: p.members.filter((_, idx) => idx !== i) }));
   };
 
-  // ── API Key helpers ──────────────────────────────────────────────────────
-  const handleSaveApiKey = () => {
-    const trimmed = newApiKey.trim();
-    if (!trimmed.startsWith('sk-ant-')) {
-      setApiKeyError("API keys start with sk-ant-");
-      return;
-    }
-    saveApiKey(trimmed);
-    setNewApiKey('');
-    setShowApiKeyModal(false);
-    setApiKeyError('');
-    onApiKeyChange?.();
-  };
-
-  const handleRemoveApiKey = () => {
-    removeApiKey();
-    onApiKeyChange?.();
-  };
-
   // ── Meal helpers ─────────────────────────────────────────────────────────
   const handleAddMeal = () => {
     if (newMeal.trim()) {
@@ -211,14 +179,12 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   const handleReset = () => {
     resetToDefaults();
     clearProfile();
-    removeApiKey();
     setPreferences(getMealPreferences());
     setDictionary(getProductDictionary());
     setSettings(getSettings());
     setSavedRecipes(getFavouriteRecipes());
     setShowResetConfirm(false);
     onProfileChange?.();
-    onApiKeyChange?.();
   };
 
   // ── Recipe import ────────────────────────────────────────────────────────
@@ -335,25 +301,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
         </div>
       </Card>
 
-      {/* ── API Key ── */}
-      <Card>
-        <div className="flex items-start justify-between">
-          <div>
-            <CardTitle>API Key</CardTitle>
-            <CardDescription>
-              {currentApiKey ? maskKey(currentApiKey) : 'No key set — using shared key'}
-            </CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => { setNewApiKey(''); setApiKeyError(''); setShowApiKeyModal(true); }}>
-              {currentApiKey ? 'Change' : 'Add Key'}
-            </Button>
-            {currentApiKey && (
-              <button onClick={handleRemoveApiKey} className="text-xs text-red-400 hover:text-red-600">Remove</button>
-            )}
-          </div>
-        </div>
-      </Card>
+      {/* ── API Key card hidden for testing phase — key is managed server-side ── */}
 
       {/* ── Usage ── */}
       <Card>
@@ -369,7 +317,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
           </div>
           <div className="flex justify-between">
             <span>Key status</span>
-            <span className="font-medium">{currentApiKey ? 'Your own key ✓' : 'Shared key'}</span>
+            <span className="font-medium">Managed by server</span>
           </div>
           {usage.firstScanDate && (
             <div className="flex justify-between">
@@ -774,23 +722,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
         )}
       </Modal>
 
-      {/* API Key Modal */}
-      <Modal isOpen={showApiKeyModal} onClose={() => setShowApiKeyModal(false)} title="Update API Key">
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Enter your Anthropic API key. Get one free at <span className="font-mono text-xs">console.anthropic.com</span>
-          </p>
-          <input type="password" placeholder="sk-ant-api03-…" value={newApiKey}
-            onChange={(e) => { setNewApiKey(e.target.value); setApiKeyError(''); }}
-            onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 font-mono" />
-          {apiKeyError && <p className="text-sm text-red-600">{apiKeyError}</p>}
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => setShowApiKeyModal(false)} className="flex-1">Cancel</Button>
-            <Button onClick={handleSaveApiKey} disabled={!newApiKey.trim()} className="flex-1">Save Key</Button>
-          </div>
-        </div>
-      </Modal>
+      {/* API Key modal hidden for testing phase */}
 
       {/* Add Meal Modal */}
       <Modal isOpen={showAddMealModal} onClose={() => setShowAddMealModal(false)}
