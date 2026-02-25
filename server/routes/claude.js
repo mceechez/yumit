@@ -412,7 +412,9 @@ router.post('/import-recipe', async (req, res) => {
       system: getSystem(req.body),
       messages: [{
         role: 'user',
-        content: `Extract the complete recipe from the following text.
+        content: `You are extracting a recipe. This is critical — you MUST include exact quantities and units for every ingredient (e.g. "300", "g", "penne pasta" or "2", "tbsp", "vegetable oil"). You MUST include every numbered instruction step in full. Do not return an ingredient without a quantity. Do not return an empty method list. If you cannot find quantities or steps in the content provided, explicitly say the data is missing rather than returning empty fields.
+
+Extract the complete recipe from the following text:
 
 ${recipeText}
 
@@ -423,24 +425,28 @@ Return ONLY a JSON object with this exact structure:
   "prepTime": "15 mins",
   "cookTime": "30 mins",
   "ingredients": [
-    { "amount": "500", "unit": "g", "item": "chicken thighs" }
+    { "amount": "300", "unit": "g", "item": "penne pasta" },
+    { "amount": "2", "unit": "tbsp", "item": "vegetable oil" },
+    { "amount": "1", "unit": "", "item": "onion, finely chopped" }
   ],
   "method": [
-    { "step": 1, "instruction": "Preheat the oven to 200°C / 180°C fan." }
+    { "step": 1, "instruction": "Bring a large pan of salted water to the boil and cook the pasta according to packet instructions." },
+    { "step": 2, "instruction": "Meanwhile, heat the oil in a frying pan over medium heat." }
   ],
   "sourceName": "Website or publication name (e.g. BBC Good Food, Jamie Oliver)"
 }
 
-Rules for ingredients:
-- "amount": the numeric quantity as a string (e.g. "500", "2", "0.5") — use "" if there is no quantity
-- "unit": the measurement unit (e.g. "g", "ml", "tbsp", "tsp", "cloves", "pieces") — use "" if there is no unit
-- "item": the ingredient name only, without quantity or unit
-- Include ALL ingredients listed in the recipe
+CRITICAL rules for ingredients:
+- "amount": the EXACT numeric quantity from the recipe as a string — NEVER leave this empty if a quantity appears
+- "unit": the measurement unit (g, ml, tbsp, tsp, cloves, pieces, etc.) — use "" only if there is truly no unit
+- "item": ingredient name only, no quantity or unit included
+- You MUST include ALL ingredients with their quantities — an ingredient without an amount is an error
 
-Rules for method:
-- Include ALL steps, numbered sequentially from 1
-- Each instruction should be a complete, clear sentence
-- Do not summarise or skip any steps
+CRITICAL rules for method:
+- You MUST copy ALL numbered steps from the recipe in full
+- Do not summarise, merge, or skip any steps
+- The method array MUST NOT be empty if the recipe contains instructions
+- Each instruction must be a complete sentence
 
 Return ONLY the JSON object.`,
       }],

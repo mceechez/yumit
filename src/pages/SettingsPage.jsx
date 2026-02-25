@@ -5,6 +5,7 @@ import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { useClaudeAI } from '../hooks/useClaudeAI';
+import { findRecipeAlternatives } from '../services/claude';
 import {
   getMealPreferences, addMeal, removeMeal,
   getProductDictionary, addProductTranslation, removeProductTranslation,
@@ -125,6 +126,8 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   const [showManualFallback, setShowManualFallback] = useState(false);
   const [pastedText, setPastedText]               = useState('');
   const [recipeMealType, setRecipeMealType]       = useState('adults');
+  const [alternatives, setAlternatives]           = useState([]);
+  const [alternativesLoading, setAlternativesLoading] = useState(false);
   const { importRecipe, loading: importLoading }  = useClaudeAI();
 
   // ── Profile helpers ──────────────────────────────────────────────────────
@@ -219,9 +222,25 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   };
 
   // ── Recipe import ────────────────────────────────────────────────────────
+
+  function resetImportState() {
+    setImportResult(null); setImportError(''); setShowManualFallback(false);
+    setPastedText(''); setAlternatives([]); setAlternativesLoading(false);
+  }
+
+  async function searchAlternatives(recipeName) {
+    setAlternativesLoading(true);
+    setAlternatives([]);
+    try {
+      const data = await findRecipeAlternatives(recipeName);
+      setAlternatives(data.alternatives || []);
+    } catch { /* silent — alternatives are best-effort */ }
+    finally { setAlternativesLoading(false); }
+  }
+
   const handleImportFromUrl = async () => {
     if (!recipeUrl.trim()) return;
-    setImportError(''); setImportResult(null); setShowManualFallback(false);
+    resetImportState();
     try {
       const result = await importRecipe(recipeUrl.trim(), undefined);
       if (!result.scrapable && !result.name) {
@@ -229,13 +248,30 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
         setShowManualFallback(true);
       } else {
         setImportResult(result);
+        if (result.isIncomplete) searchAlternatives(result.name);
+      }
+    } catch (err) { setImportError(err.message); }
+  };
+
+  const handleTryAlternative = async (altUrl) => {
+    setImportError('');
+    try {
+      const result = await importRecipe(altUrl, undefined);
+      if (result.name) {
+        setImportResult(result);
+        setAlternatives([]);
+        // If still incomplete, search again from the new name
+        if (result.isIncomplete) searchAlternatives(result.name);
+      } else {
+        setImportError('Couldn\'t get the full recipe from that source either.');
+        setShowManualFallback(true);
       }
     } catch (err) { setImportError(err.message); }
   };
 
   const handleExtractFromText = async () => {
     if (!pastedText.trim()) return;
-    setImportError(''); setImportResult(null);
+    setImportError(''); setImportResult(null); setAlternatives([]);
     try {
       const result = await importRecipe(undefined, pastedText.trim());
       setImportResult(result);
@@ -259,13 +295,11 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
     addMeal(recipeMealType, importResult.name);
     setPreferences(getMealPreferences());
     setSavedRecipes(getFavouriteRecipes());
-    setImportResult(null); setRecipeUrl(''); setPastedText('');
-    setShowManualFallback(false); setImportError('');
+    setRecipeUrl('');
+    resetImportState();
   };
 
-  const handleDiscardRecipe = () => {
-    setImportResult(null); setImportError(''); setShowManualFallback(false); setPastedText('');
-  };
+  const handleDiscardRecipe = () => { setRecipeUrl(''); resetImportState(); };
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -456,6 +490,75 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                   className="text-xs text-basket-green-600 hover:underline shrink-0 ml-2">View original</a>
               )}
             </div>
+
+            {/* ── Incomplete scrape warning + alternatives ── */}
+            {importResult.isIncomplete && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">
+                    We couldn't get the full recipe from that page
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Some ingredients are missing quantities or the method is incomplete.
+                  </p>
+                </div>
+
+                {alternativesLoading ? (
+                  <p className="text-xs text-amber-700 animate-pulse">Searching for alternatives…</p>
+                ) : alternatives.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">We found these alternatives:</p>
+                    {alternatives.map((alt, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleTryAlternative(alt.url)}
+                        disabled={importLoading}
+                        className="w-full flex items-center justify-between p-3 bg-white rounded-lg border border-amber-200 hover:border-basket-green-400 hover:bg-basket-green-50 transition-colors text-left disabled:opacity-50"
+                      >
+                        <div className="text-sm">
+                          <span className="font-semibold text-gray-900">{alt.siteName}</span>
+                          <span className="text-gray-500 ml-2">{importResult.name}</span>
+                        </div>
+                        <span className="text-basket-green-600 text-xs font-semibold shrink-0 ml-2">
+                          {importLoading ? '…' : 'Try this →'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-700">No alternative sources found automatically.</p>
+                )}
+
+                {!showManualFallback && (
+                  <button
+                    onClick={() => setShowManualFallback(true)}
+                    className="text-xs text-amber-700 underline underline-offset-2"
+                  >
+                    Or paste the recipe text manually
+                  </button>
+                )}
+                {showManualFallback && (
+                  <div className="space-y-2">
+                    <textarea
+                      rows={5}
+                      value={pastedText}
+                      onChange={(e) => setPastedText(e.target.value)}
+                      placeholder="Paste the recipe ingredients and instructions here…"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 resize-none"
+                    />
+                    <Button
+                      onClick={handleExtractFromText}
+                      loading={importLoading}
+                      disabled={!pastedText.trim() || importLoading}
+                      size="sm"
+                    >
+                      Extract Recipe
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div>
               <p className="text-sm font-medium text-gray-700 mb-2">
                 Ingredients
@@ -467,9 +570,9 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                 {(importResult.ingredients || []).map((ing, i) => (
                   <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm bg-white">
                     <span className="text-gray-500 shrink-0 w-20 text-xs tabular-nums">
-                      {[ing.amount, ing.unit].filter(Boolean).join(' ')}
+                      {[ing.amount || ing.quantity, ing.unit].filter(Boolean).join(' ')}
                     </span>
-                    <span className="text-gray-900 truncate">{ing.item}</span>
+                    <span className="text-gray-900 truncate">{ing.item || ing.name}</span>
                   </div>
                 ))}
               </div>

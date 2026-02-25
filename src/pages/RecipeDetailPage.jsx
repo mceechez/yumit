@@ -3,10 +3,27 @@
 export function RecipeDetailPage({ recipe, onBack }) {
   if (!recipe) return null;
 
-  // Normalise step list: method[] from imports, instructions[] from batch cooking
-  const steps = recipe.method?.length
-    ? recipe.method.map(m => m.instruction)
-    : (recipe.instructions || []);
+  // Normalise step list — Claude may return:
+  //   method: [{step, instruction}, ...]   ← expected import format
+  //   method: ["step text", ...]           ← Claude occasionally returns strings
+  //   instructions: ["step text", ...]     ← batch cooking format
+  const steps = [];
+  if (recipe.method?.length) {
+    for (const m of recipe.method) {
+      if (typeof m === 'string') steps.push(m);
+      else if (m?.instruction) steps.push(m.instruction);
+    }
+  } else if (recipe.instructions?.length) {
+    steps.push(...recipe.instructions);
+  }
+
+  // Normalise ingredient display — Claude may use "amount"+"unit"+"item" (new)
+  // or "quantity"+"item" (old field names) or "amount"+"item" (no unit).
+  function formatIngredient(ing) {
+    const qty = ing.amount || ing.quantity || '';
+    const parts = [qty, ing.unit, ing.item].filter(Boolean);
+    return parts.join(' ') || ing.item || ing.name || '';
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-white overflow-y-auto">
@@ -54,13 +71,7 @@ export function RecipeDetailPage({ recipe, onBack }) {
               {recipe.ingredients.map((ing, i) => (
                 <li key={i} className="flex items-start gap-3 text-sm text-gray-700">
                   <span className="w-1.5 h-1.5 rounded-full bg-basket-green-500 flex-shrink-0 mt-2" />
-                  <span>
-                    {/* New imported format: { amount, unit, item } */}
-                    {ing.item
-                      ? [ing.amount, ing.unit, ing.item].filter(Boolean).join(' ')
-                      /* Old batch-cooking format: { amount, fromShop } with no separate item */
-                      : ing.amount}
-                  </span>
+                  <span>{formatIngredient(ing)}</span>
                 </li>
               ))}
             </ul>

@@ -371,13 +371,35 @@ export async function importRecipe(url, pastedText) {
     amount: scaleAmount(ing.amount, scalingFactor),
   }));
 
+  // Detect incomplete extraction: any ingredient missing amount, or no method steps
+  const isIncomplete = (
+    scaledIngredients.some(ing => !ing.amount && !ing.quantity) ||
+    (!data.method?.length && !data.instructions?.length)
+  );
+
   return {
     ...data,
     ingredients: scaledIngredients,
     servings: targetPortions > 0 ? targetPortions : originalServings,
     sourceUrl: url || null,
     importedDate: new Date().toISOString().split('T')[0],
+    isIncomplete,
   };
+}
+
+// ─── Search scrape-friendly sites for an alternative recipe URL ───────────────
+export async function findRecipeAlternatives(recipeName) {
+  try {
+    const res = await fetch('/api/find-alternatives', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipeName }),
+    });
+    if (!res.ok) return { alternatives: [] };
+    return res.json();
+  } catch {
+    return { alternatives: [] };
+  }
 }
 
 // ─── Health check ─────────────────────────────────────────────────────────────

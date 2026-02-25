@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { SCRAPE_FRIENDLY_SITES } from './config/scrapeFriendlySites.js';
 
 dotenv.config();
 
@@ -38,17 +39,6 @@ app.post('/api/claude', async (req, res) => {
 });
 
 // ─── /api/import-recipe — URL scraper + Anthropic proxy ───────────────────────
-const ALDI_PRODUCTS = [
-  'Oranges', 'Chopped Tomatoes', 'Chicken Thigh Fillets', 'Frozen Coldwater Prawns',
-  'Frozen Chips', 'Semi-Skimmed Milk', 'Free Range Eggs', 'White Sliced Bread',
-  'Mild Cheddar', 'Basmati Rice', 'Penne Pasta', 'Extra Virgin Olive Oil',
-  'Diced Beef', 'Pork Mince', 'Beef Mince', 'Salmon Fillets', 'Broccoli',
-  'Carrots', 'White Potatoes', 'Brown Onions', 'Garlic', 'Bananas', 'Apples',
-  'Cucumber', 'Vine Tomatoes', 'Mixed Peppers', 'Greek Yogurt', 'Salted Butter',
-  'Mature Cheddar', 'Fish Fingers', 'Frozen Garden Peas', 'Frozen Sweetcorn',
-  'Baked Beans', 'Mackerel Fillets', 'Cauliflower', 'Aubergine', 'Strawberries',
-  'Pork Shoulder Steaks', 'Cod Fillets',
-].join(', ');
 
 function parseJson(text) {
   try { return JSON.parse(text); } catch {}
@@ -117,29 +107,46 @@ app.post('/api/import-recipe', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 3000,
         system: systemPrompt || DEFAULT_SYSTEM,
         messages: [{
           role: 'user',
-          content: `Extract the recipe from the following text.
+          content: `You are extracting a recipe. This is critical — you MUST include exact quantities and units for every ingredient (e.g. "300", "g", "penne pasta" or "2", "tbsp", "vegetable oil"). You MUST include every numbered instruction step in full. Do not return an ingredient without a quantity. Do not return an empty method list. If you cannot find quantities or steps in the content provided, explicitly say the data is missing rather than returning empty fields.
+
+Extract the complete recipe from the following text:
 
 ${recipeText}
 
-Known products available in store:
-${ALDI_PRODUCTS}
-
-Return ONLY a JSON object:
+Return ONLY a JSON object with this exact structure:
 {
   "name": "Recipe name",
   "servings": 4,
   "prepTime": "15 mins",
   "cookTime": "30 mins",
   "ingredients": [
-    { "item": "ingredient name", "quantity": "500g", "aldiProduct": "closest store product or null" }
-  ]
+    { "amount": "300", "unit": "g", "item": "penne pasta" },
+    { "amount": "2", "unit": "tbsp", "item": "vegetable oil" },
+    { "amount": "1", "unit": "", "item": "onion, finely chopped" }
+  ],
+  "method": [
+    { "step": 1, "instruction": "Bring a large pan of salted water to the boil and cook the pasta according to packet instructions." },
+    { "step": 2, "instruction": "Meanwhile, heat the oil in a frying pan over medium heat." }
+  ],
+  "sourceName": "Website or publication name (e.g. BBC Good Food, Jamie Oliver)"
 }
 
-For "aldiProduct": match to the closest item from the store products list if it's a clear match. Set null for spices, condiments, or items not in the list.
+CRITICAL rules for ingredients:
+- "amount": the EXACT numeric quantity from the recipe as a string — NEVER leave this empty if a quantity appears
+- "unit": the measurement unit (g, ml, tbsp, tsp, cloves, pieces, etc.) — use "" only if there is truly no unit
+- "item": ingredient name only, no quantity or unit included
+- You MUST include ALL ingredients with their quantities — an ingredient without an amount is an error
+
+CRITICAL rules for method:
+- You MUST copy ALL numbered steps from the recipe in full
+- Do not summarise, merge, or skip any steps
+- The method array MUST NOT be empty if the recipe contains instructions
+- Each instruction must be a complete sentence
+
 Return ONLY the JSON object.`,
         }],
       }),
@@ -169,6 +176,75 @@ Return ONLY the JSON object.`,
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+});
+
+// ─── /api/find-alternatives — search scrape-friendly sites for an alternative recipe URL ──
+// Returns up to 3 candidate recipe URLs from known sites, searched in parallel.
+// Each site search has a 5-second timeout; failures are silently skipped.
+
+const RECIPE_URL_SKIP = /\/(search|categor|tag|author|page\/|topic|collection|video|podcast|about|contact|privacy|terms)/i;
+
+function extractRecipeUrl(html, domain) {
+  const clean = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ');
+
+  const escaped = domain.replace(/\./g, '\\.');
+  const pattern = new RegExp(`href="(https?://(?:www\\.)?${escaped}/[^"#?]{4,})"`, 'gi');
+
+  let match;
+  while ((match = pattern.exec(clean)) !== null) {
+    const url = match[1];
+    try {
+      const { pathname } = new URL(url);
+      const segments = pathname.split('/').filter(Boolean);
+      if (segments.length < 1) continue;
+      if (RECIPE_URL_SKIP.test(pathname)) continue;
+      return url.split('#')[0];
+    } catch { continue; }
+  }
+  return null;
+}
+
+async function findFirstRecipeUrl(site, query) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(site.searchUrl(query), {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const html = await res.text();
+    return extractRecipeUrl(html, site.domain);
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+}
+
+app.post('/api/find-alternatives', async (req, res) => {
+  const { recipeName } = req.body;
+  if (!recipeName?.trim()) return res.status(400).json({ error: 'recipeName required' });
+
+  const settled = await Promise.allSettled(
+    SCRAPE_FRIENDLY_SITES.map(site => findFirstRecipeUrl(site, recipeName))
+  );
+
+  const alternatives = settled
+    .map((r, i) =>
+      r.status === 'fulfilled' && r.value
+        ? { siteName: SCRAPE_FRIENDLY_SITES[i].name, url: r.value }
+        : null
+    )
+    .filter(Boolean)
+    .slice(0, 3);
+
+  res.json({ alternatives });
 });
 
 // ─── Health check ─────────────────────────────────────────────────────────────
