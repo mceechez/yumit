@@ -1,6 +1,9 @@
 // Claude API service — all requests go through /api/claude (Vercel serverless proxy).
 // The Anthropic API key is never exposed to the browser.
-import { getApiKey, getProfile } from './profile';
+// TESTING: per-user API key is disabled. The server uses process.env.ANTHROPIC_API_KEY for all calls.
+// To restore per-user keys: re-add `getApiKey` to the import below and pass an Authorization
+// header in claudeCall and importRecipe when a key is present.
+import { getProfile } from './profile';
 import { buildSystemPrompt } from '../utils/systemPrompt';
 
 const MODEL = 'claude-sonnet-4-20250514';
@@ -41,13 +44,9 @@ async function claudeCallParsed(payload) {
 
 // POST a full Anthropic messages payload to /api/claude and return Claude's text response.
 async function claudeCall(payload) {
-  const apiKey = getApiKey();
   const res = await fetch('/api/claude', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
@@ -337,14 +336,10 @@ Return ONLY the JSON object.`,
 // ─── Import a recipe from a URL or pasted text ────────────────────────────────
 // Calls /api/import-recipe (separate endpoint) because URL scraping must be server-side.
 export async function importRecipe(url, pastedText) {
-  const apiKey = getApiKey();
   const profile = getProfile();
   const res = await fetch('/api/import-recipe', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, pastedText, systemPrompt: buildSystemPrompt(profile) }),
   });
 
