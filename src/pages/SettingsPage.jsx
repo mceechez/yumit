@@ -250,7 +250,10 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
       prepTime: importResult.prepTime,
       cookTime: importResult.cookTime,
       ingredients: importResult.ingredients,
-      sourceUrl: recipeUrl.trim() || null,
+      method: importResult.method,
+      sourceName: importResult.sourceName,
+      sourceUrl: importResult.sourceUrl,
+      importedDate: importResult.importedDate,
       mealType: recipeMealType,
     });
     addMeal(recipeMealType, importResult.name);
@@ -263,8 +266,6 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   const handleDiscardRecipe = () => {
     setImportResult(null); setImportError(''); setShowManualFallback(false); setPastedText('');
   };
-
-  const aldiMappedCount = (recipe) => (recipe.ingredients || []).filter(i => i.aldiProduct).length;
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -459,23 +460,25 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
               <p className="text-sm font-medium text-gray-700 mb-2">
                 Ingredients
                 <span className="ml-2 text-xs text-gray-400 font-normal">
-                  {aldiMappedCount(importResult)} of {importResult.ingredients?.length || 0} mapped to store
+                  {importResult.ingredients?.length || 0} items · scaled to {importResult.servings} portions
                 </span>
               </p>
               <div className="divide-y divide-gray-50 border border-gray-100 rounded-lg overflow-hidden">
                 {(importResult.ingredients || []).map((ing, i) => (
-                  <div key={i} className="flex items-center justify-between px-3 py-2 text-sm bg-white">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-gray-500 shrink-0 w-16 text-xs">{ing.quantity}</span>
-                      <span className="text-gray-900 truncate">{ing.item}</span>
-                    </div>
-                    {ing.aldiProduct
-                      ? <Badge variant="info" size="sm" className="shrink-0 ml-2">{ing.aldiProduct}</Badge>
-                      : <span className="text-xs text-gray-300 shrink-0 ml-2">—</span>}
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm bg-white">
+                    <span className="text-gray-500 shrink-0 w-20 text-xs tabular-nums">
+                      {[ing.amount, ing.unit].filter(Boolean).join(' ')}
+                    </span>
+                    <span className="text-gray-900 truncate">{ing.item}</span>
                   </div>
                 ))}
               </div>
             </div>
+            {importResult.method?.length > 0 && (
+              <p className="text-xs text-gray-500">
+                {importResult.method.length} method steps extracted
+              </p>
+            )}
             <div>
               <p className="text-sm font-medium text-gray-700 mb-2">Add to favourites as:</p>
               <div className="flex gap-2">
@@ -516,7 +519,9 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                     <span className="text-xs text-gray-400">{recipe.ingredients?.length || 0} ingredients</span>
                     {recipe.sourceUrl && (
                       <a href={recipe.sourceUrl} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-basket-green-600 hover:underline">Source</a>
+                        className="text-xs text-basket-green-600 hover:underline">
+                        {recipe.sourceName || 'Source'}
+                      </a>
                     )}
                   </div>
                 </div>

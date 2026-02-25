@@ -3,8 +3,18 @@
 // TESTING: per-user API key is disabled. The server uses process.env.ANTHROPIC_API_KEY for all calls.
 // To restore per-user keys: re-add `getApiKey` to the import below and pass an Authorization
 // header in claudeCall and importRecipe when a key is present.
-import { getProfile } from './profile';
+import { getProfile, calculateTotalPortions } from './profile';
 import { buildSystemPrompt } from '../utils/systemPrompt';
+
+// Scales a numeric amount string by factor. Leaves non-numeric values (e.g. "a handful") unchanged.
+function scaleAmount(amountStr, factor) {
+  if (!amountStr || factor === 1) return amountStr;
+  const num = parseFloat(amountStr);
+  if (isNaN(num)) return amountStr;
+  const scaled = num * factor;
+  if (scaled === Math.floor(scaled)) return String(Math.floor(scaled));
+  return String(Math.round(scaled * 10) / 10);
+}
 
 const MODEL = 'claude-sonnet-4-20250514';
 
@@ -335,6 +345,7 @@ Return ONLY the JSON object.`,
 
 // ─── Import a recipe from a URL or pasted text ────────────────────────────────
 // Calls /api/import-recipe (separate endpoint) because URL scraping must be server-side.
+// Returns the full recipe with ingredients scaled to household portions.
 export async function importRecipe(url, pastedText) {
   const profile = getProfile();
   const res = await fetch('/api/import-recipe', {
@@ -348,7 +359,25 @@ export async function importRecipe(url, pastedText) {
     throw new Error(err.error || 'Import failed');
   }
 
-  return res.json();
+  const data = await res.json();
+
+  // Scale ingredients to match household portion count
+  const originalServings = Number(data.servings) || 1;
+  const targetPortions = calculateTotalPortions(profile?.members || []);
+  const scalingFactor = targetPortions > 0 ? targetPortions / originalServings : 1;
+
+  const scaledIngredients = (data.ingredients || []).map(ing => ({
+    ...ing,
+    amount: scaleAmount(ing.amount, scalingFactor),
+  }));
+
+  return {
+    ...data,
+    ingredients: scaledIngredients,
+    servings: targetPortions > 0 ? targetPortions : originalServings,
+    sourceUrl: url || null,
+    importedDate: new Date().toISOString().split('T')[0],
+  };
 }
 
 // ─── Health check ─────────────────────────────────────────────────────────────

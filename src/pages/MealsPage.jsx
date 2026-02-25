@@ -4,6 +4,7 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { useClaudeAI } from '../hooks/useClaudeAI';
+import { RecipeDetailPage } from './RecipeDetailPage';
 import {
   getShoppingHistory,
   getMealPreferences,
@@ -494,6 +495,14 @@ export function MealsPage() {
         )}
       </section>
 
+      {/* ── Recipe detail screen ─────────────────────────────────────────── */}
+      {selectedRecipe && (
+        <RecipeDetailPage
+          recipe={selectedRecipe}
+          onBack={() => setSelectedRecipe(null)}
+        />
+      )}
+
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
 
       {/* Bulk clear confirmation */}
@@ -590,65 +599,6 @@ export function MealsPage() {
               <Button variant="outline" onClick={() => setEditingFavourite(null)}>Cancel</Button>
               <Button onClick={saveFavouriteEdit}>Save Changes</Button>
             </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Recipe detail (view) */}
-      <Modal
-        isOpen={!!selectedRecipe}
-        onClose={() => setSelectedRecipe(null)}
-        title={selectedRecipe?.name}
-        size="lg"
-      >
-        {selectedRecipe && (
-          <div className="space-y-4">
-            <p className="text-gray-600">{selectedRecipe.description}</p>
-            <div className="flex gap-4 text-sm text-gray-500">
-              <span>⏱ Prep: {selectedRecipe.prepTime}</span>
-              <span>🍳 Cook: {selectedRecipe.cookTime}</span>
-              <span>🍽 Serves: {selectedRecipe.servings}</span>
-            </div>
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-2">Ingredients</h4>
-              <ul className="space-y-1">
-                {selectedRecipe.ingredients?.map((ing, i) => (
-                  <li key={i} className="flex items-center gap-2 text-sm">
-                    <span className={ing.fromShop ? 'text-green-500' : 'text-gray-400'}>
-                      {ing.fromShop ? '✓' : '○'}
-                    </span>
-                    <span>{ing.amount} {ing.item}</span>
-                    {ing.fromShop && <Badge variant="success" size="sm">from shop</Badge>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-2">Instructions</h4>
-              <ol className="space-y-2">
-                {selectedRecipe.instructions?.map((step, i) => (
-                  <li key={i} className="flex gap-3 text-sm">
-                    <span className="w-6 h-6 bg-basket-green-100 text-basket-green-600 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0">
-                      {i + 1}
-                    </span>
-                    <span>{step}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-            {selectedRecipe.tips?.length > 0 && (
-              <div className="bg-blue-50 rounded-lg p-3">
-                <h4 className="font-semibold text-blue-800 mb-2">Tips</h4>
-                <ul className="space-y-1">
-                  {selectedRecipe.tips.map((tip, i) => (
-                    <li key={i} className="text-sm text-blue-700 flex items-start gap-2">
-                      <span>💡</span>
-                      <span>{tip}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
       </Modal>

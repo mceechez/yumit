@@ -406,43 +406,42 @@ router.post('/import-recipe', async (req, res) => {
   try {
     const client = getClient(req);
 
-    const aldiProducts = [
-      'Oranges', 'Chopped Tomatoes', 'Chicken Thigh Fillets', 'Frozen Coldwater Prawns',
-      'Frozen Chips', 'Semi-Skimmed Milk', 'Free Range Eggs', 'White Sliced Bread',
-      'Mild Cheddar', 'Basmati Rice', 'Penne Pasta', 'Extra Virgin Olive Oil',
-      'Diced Beef', 'Pork Mince', 'Beef Mince', 'Salmon Fillets', 'Broccoli',
-      'Carrots', 'White Potatoes', 'Brown Onions', 'Garlic', 'Bananas', 'Apples',
-      'Cucumber', 'Vine Tomatoes', 'Mixed Peppers', 'Greek Yogurt', 'Salted Butter',
-      'Mature Cheddar', 'Fish Fingers', 'Frozen Garden Peas', 'Frozen Sweetcorn',
-      'Baked Beans', 'Mackerel Fillets', 'Cauliflower', 'Aubergine', 'Strawberries',
-      'Pork Shoulder Steaks', 'Cod Fillets',
-    ].join(', ');
-
     const message = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      max_tokens: 3000,
       system: getSystem(req.body),
       messages: [{
         role: 'user',
-        content: `Extract the recipe from the following text.
+        content: `Extract the complete recipe from the following text.
 
 ${recipeText}
 
-Known products available in store:
-${aldiProducts}
-
-Return ONLY a JSON object:
+Return ONLY a JSON object with this exact structure:
 {
   "name": "Recipe name",
   "servings": 4,
   "prepTime": "15 mins",
   "cookTime": "30 mins",
   "ingredients": [
-    { "item": "ingredient name", "quantity": "500g", "aldiProduct": "closest store product or null" }
-  ]
+    { "amount": "500", "unit": "g", "item": "chicken thighs" }
+  ],
+  "method": [
+    { "step": 1, "instruction": "Preheat the oven to 200°C / 180°C fan." }
+  ],
+  "sourceName": "Website or publication name (e.g. BBC Good Food, Jamie Oliver)"
 }
 
-For "aldiProduct": match to the closest item from the store products list if it's a clear match. Set null for spices, condiments, or items not in the list.
+Rules for ingredients:
+- "amount": the numeric quantity as a string (e.g. "500", "2", "0.5") — use "" if there is no quantity
+- "unit": the measurement unit (e.g. "g", "ml", "tbsp", "tsp", "cloves", "pieces") — use "" if there is no unit
+- "item": the ingredient name only, without quantity or unit
+- Include ALL ingredients listed in the recipe
+
+Rules for method:
+- Include ALL steps, numbered sequentially from 1
+- Each instruction should be a complete, clear sentence
+- Do not summarise or skip any steps
+
 Return ONLY the JSON object.`,
       }],
     });
