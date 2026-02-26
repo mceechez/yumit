@@ -20,7 +20,7 @@ function StepBasics({ data, onChange }) {
           placeholder="e.g. The Smiths"
           value={data.householdName}
           onChange={(e) => onChange({ householdName: e.target.value })}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500"
+          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500"
         />
       </div>
 
@@ -29,7 +29,7 @@ function StepBasics({ data, onChange }) {
         <select
           value={data.supermarket}
           onChange={(e) => onChange({ supermarket: e.target.value })}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
+          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500"
         >
           <option value="">Select your supermarket…</option>
           {SUPERMARKETS.map(s => (
@@ -99,7 +99,7 @@ function MemberForm({ initial, onSave, onCancel }) {
   };
 
   return (
-    <div className="bg-gray-50 rounded-xl p-4 space-y-4 border border-gray-200">
+    <div className="bg-gray-200 rounded-xl p-4 space-y-4 border border-gray-300">
       <div className="space-y-1">
         <label className="text-sm font-medium text-gray-700">Name <span className="text-gray-400 font-normal">(optional)</span></label>
         <input
@@ -107,7 +107,7 @@ function MemberForm({ initial, onSave, onCancel }) {
           placeholder="e.g. Mum, Theo, Grandma…"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
+          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500"
         />
       </div>
 
@@ -121,7 +121,7 @@ function MemberForm({ initial, onSave, onCancel }) {
               className={`flex flex-col items-center p-2 rounded-xl border-2 transition-colors text-center ${
                 lifeStage === key
                   ? 'border-basket-green-500 bg-basket-green-50'
-                  : 'border-gray-200 bg-white hover:border-gray-300'
+                  : 'border-gray-200 hover:border-gray-300'
               }`}
             >
               <span className="text-xl">{stage.emoji}</span>
@@ -203,7 +203,7 @@ function StepMembers({ members, onAdd, onRemove }) {
             return (
               <div
                 key={i}
-                className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-3"
+                className="flex items-center justify-between border border-gray-200 rounded-xl px-4 py-3"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-xl">{stage?.emoji}</span>
@@ -360,7 +360,7 @@ function StepDietary({ members, onUpdateMember }) {
           <div key={i} className="border border-gray-200 rounded-xl overflow-hidden">
             <button
               onClick={() => setOpenMember(isOpen ? -1 : i)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-200 transition-colors text-left"
             >
               <div className="flex items-center gap-2">
                 <span className="text-lg">{stage?.emoji}</span>
@@ -375,7 +375,7 @@ function StepDietary({ members, onUpdateMember }) {
             </button>
 
             {isOpen && (
-              <div className="px-4 pb-4 space-y-4 border-t border-gray-100 bg-gray-50">
+              <div className="px-4 pb-4 space-y-4 border-t border-gray-200 bg-gray-200">
                 {/* Allergens */}
                 <div className="space-y-2 pt-3">
                   <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
@@ -520,19 +520,19 @@ export function OnboardingPage({ onComplete }) {
     (step === 3 && !canAdvanceStep3);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-basket-green-50 to-white flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-5">
 
         {/* Header */}
         <div className="text-center">
           <span className="text-3xl">🧺</span>
-          <p className="text-xs text-gray-400 mt-1">Step {step} of {TOTAL_STEPS}</p>
+          <p className="text-xs text-gray-500 mt-1">Step {step} of {TOTAL_STEPS}</p>
         </div>
 
         <ProgressBar step={step} />
 
         {/* Step content */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <div className="bg-gray-100 rounded-2xl border border-gray-200 p-6">
           {step === 1 && (
             <StepBasics data={basics} onChange={(patch) => setBasics(b => ({ ...b, ...patch }))} />
           )}

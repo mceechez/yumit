@@ -8,7 +8,7 @@ export function Card({ children, className = '', padding = 'md', ...props }) {
 
   return (
     <div
-      className={`bg-white rounded-xl shadow-sm border border-gray-100 ${paddingClasses[padding]} ${className}`}
+      className={`bg-white rounded-2xl border border-gray-200 ${paddingClasses[padding]} ${className}`}
       {...props}
     >
       {children}
@@ -50,7 +50,7 @@ export function CardContent({ children, className = '' }) {
 
 export function CardFooter({ children, className = '' }) {
   return (
-    <div className={`mt-4 pt-4 border-t border-gray-100 ${className}`}>
+    <div className={`mt-4 pt-4 border-t border-gray-200 ${className}`}>
       {children}
     </div>
   );

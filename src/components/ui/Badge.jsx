@@ -5,13 +5,13 @@ export function Badge({
   className = '',
 }) {
   const variants = {
-    default: 'bg-gray-100 text-gray-700',
-    primary: 'bg-basket-green-100 text-basket-green-700',
+    default:   'bg-gray-200 text-gray-700',
+    primary:   'bg-basket-green-100 text-basket-green-700',
     secondary: 'bg-basket-orange-100 text-basket-orange-700',
-    success: 'bg-green-100 text-green-700',
-    warning: 'bg-yellow-100 text-yellow-700',
-    danger: 'bg-red-100 text-red-700',
-    info: 'bg-blue-100 text-blue-700',
+    success:   'bg-green-100 text-green-700',
+    warning:   'bg-amber-100 text-amber-700',
+    danger:    'bg-red-100 text-red-700',
+    info:      'bg-blue-100 text-blue-700',
   };
 
   const sizes = {
@@ -33,7 +33,7 @@ export function GradeBadge({ grade, size = 'lg' }) {
   const gradeVariants = {
     A: 'bg-green-100 text-green-700',
     B: 'bg-blue-100 text-blue-700',
-    C: 'bg-yellow-100 text-yellow-700',
+    C: 'bg-amber-100 text-amber-700',
     D: 'bg-red-100 text-red-700',
   };
 

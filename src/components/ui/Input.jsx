@@ -7,13 +7,14 @@ export const Input = forwardRef(function Input(
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-gray-600 mb-1.5">
           {label}
         </label>
       )}
       <input
         ref={ref}
-        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-basket-green-500 focus:border-transparent outline-none transition-all ${
+        className={`w-full px-3 py-2.5 bg-gray-200 border rounded-xl text-gray-900 placeholder-gray-500
+          focus:ring-2 focus:ring-basket-green-500 focus:border-transparent outline-none transition-all ${
           error ? 'border-red-500' : 'border-gray-300'
         } ${className}`}
         {...props}
@@ -32,13 +33,14 @@ export const Textarea = forwardRef(function Textarea(
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-gray-600 mb-1.5">
           {label}
         </label>
       )}
       <textarea
         ref={ref}
-        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-basket-green-500 focus:border-transparent outline-none transition-all resize-y min-h-[100px] ${
+        className={`w-full px-3 py-2.5 bg-gray-200 border rounded-xl text-gray-900 placeholder-gray-500
+          focus:ring-2 focus:ring-basket-green-500 focus:border-transparent outline-none transition-all resize-y min-h-[100px] ${
           error ? 'border-red-500' : 'border-gray-300'
         } ${className}`}
         {...props}

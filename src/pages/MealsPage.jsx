@@ -3,6 +3,8 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
+import { Toast, useToast } from '../components/ui/Toast';
+import { AnimatedPage } from '../components/AnimatedPage';
 import { useClaudeAI } from '../hooks/useClaudeAI';
 import { RecipeDetailPage } from './RecipeDetailPage';
 import {
@@ -18,6 +20,7 @@ import { formatRelativeDate } from '../utils/formatters';
 
 export function MealsPage() {
   const { loading, generateBatchCooking } = useClaudeAI();
+  const [toast, showToast] = useToast();
   const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [generatedRecipes, setGeneratedRecipes] = useState(null);
 
@@ -106,6 +109,7 @@ export function MealsPage() {
       updateMealPreferences('kids', updated);
     }
     setEditingMeal(null);
+    showToast('Meal updated');
   }
 
   function saveFavouriteEdit() {
@@ -115,6 +119,7 @@ export function MealsPage() {
     updateFavouriteRecipe(id, updates);
     setFavourites(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
     setEditingFavourite(null);
+    showToast('Recipe saved');
   }
 
   // ─── Bulk actions ─────────────────────────────────────────────────────────
@@ -323,7 +328,8 @@ export function MealsPage() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6">
+    <AnimatedPage className="space-y-6">
+      {toast && <Toast {...toast} />}
 
       {/* Page header */}
       <div className="flex items-center justify-between">
@@ -387,10 +393,10 @@ export function MealsPage() {
         </Card>
       )}
 
-      {/* Family Favourites */}
+      {/* Household Favourites */}
       {favourites.length > 0 && (
         <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Family Favourites</h3>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Household Favourites</h3>
           {favourites.map(recipe => renderFavouriteCard(recipe))}
         </section>
       )}
@@ -603,7 +609,7 @@ export function MealsPage() {
         )}
       </Modal>
 
-    </div>
+    </AnimatedPage>
   );
 }
 

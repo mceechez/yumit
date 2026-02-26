@@ -5,6 +5,8 @@ import { Button } from '../components/ui/Button';
 import { Badge, GradeBadge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
+import { SkeletonScanResult } from '../components/ui/Skeleton';
+import { AnimatedPage } from '../components/AnimatedPage';
 import { useClaudeAI } from '../hooks/useClaudeAI';
 import {
   researchNutrition,
@@ -84,20 +86,20 @@ function AllergenFlag({ flags, personNames }) {
 function ScienceInsights({ insights }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mt-4 border-t border-gray-100 pt-3">
+    <div className="mt-4 border-t border-gray-200 pt-3">
       <button
         onClick={() => setOpen(o => !o)}
         className="flex items-center justify-between w-full text-left"
       >
         <span className="text-sm font-semibold text-blue-700">What the science says</span>
-        <span className="text-blue-400 text-xs">{open ? '▲ hide' : '▼ show'}</span>
+        <span className="text-blue-500 text-xs">{open ? '▲ hide' : '▼ show'}</span>
       </button>
       {open && (
         <div className="mt-3 space-y-3">
           {insights.map((insight, i) => (
             <div key={i} className="bg-blue-50 rounded-xl p-3 space-y-1">
-              <p className="text-sm font-semibold text-blue-900">{insight.heading}</p>
-              <p className="text-sm text-blue-800 leading-relaxed">{insight.body}</p>
+              <p className="text-sm font-semibold text-blue-700">{insight.heading}</p>
+              <p className="text-sm text-blue-700 leading-relaxed">{insight.body}</p>
               {insight.source && (
                 <p className="text-xs text-blue-500">{insight.source}</p>
               )}
@@ -153,6 +155,8 @@ export function ScanPage() {
   const [batchCooking, setBatchCooking] = useState(null);
   const [smartSwaps, setSmartSwaps] = useState(null);
   const [processingStep, setProcessingStep] = useState('');
+  const [showScanSuccess, setShowScanSuccess] = useState(false);
+  const [allergenWarningDismissed, setAllergenWarningDismissed] = useState(false);
 
   // Batch recipe detail overlay
   const [selectedBatchRecipe, setSelectedBatchRecipe] = useState(null);
@@ -224,7 +228,13 @@ export function ScanPage() {
 
       setParsedReceipt({ items: translatedItems, total, date, store });
       setProcessingStep('');
-      setStep('parsed');
+      setAllergenWarningDismissed(false);
+      // Brief success animation before showing results
+      setShowScanSuccess(true);
+      setTimeout(() => {
+        setShowScanSuccess(false);
+        setStep('parsed');
+      }, 1400);
     } catch (err) {
       console.error('Failed to parse receipt:', err);
       setProcessingStep('');
@@ -341,15 +351,33 @@ export function ScanPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <AnimatedPage className="space-y-4">
       <h2 className="text-xl font-bold text-gray-900">Scan Receipt</h2>
+
+      {/* Scan success overlay */}
+      {showScanSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-success-bg">
+          <div className="bg-gray-100 rounded-3xl p-8 flex flex-col items-center gap-4 shadow-2xl">
+            <svg viewBox="0 0 52 52" className="w-20 h-20" fill="none">
+              <circle cx="26" cy="26" r="18" stroke="#4CAF50" strokeWidth="3" className="animate-check-circle" />
+              <path d="M14 26l9 9 15-16" stroke="#4CAF50" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="animate-check-mark" />
+            </svg>
+            <p className="text-lg font-semibold text-gray-900">Receipt scanned!</p>
+          </div>
+        </div>
+      )}
 
       {/* Step indicator — visible whenever a background step is running */}
       {processingStep && (
-        <div className="flex items-center gap-3 bg-basket-green-50 border border-basket-green-200 rounded-xl px-4 py-3">
-          <div className="w-4 h-4 border-2 border-basket-green-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+        <div className="flex items-center gap-3 bg-basket-green-50 border border-basket-green-100 rounded-xl px-4 py-3">
+          <div className="w-4 h-4 border-2 border-basket-green-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
           <span className="text-sm font-medium text-basket-green-700">{processingStep}</span>
         </div>
+      )}
+
+      {/* Skeleton while scanning/parsing */}
+      {loading && processingStep && step === 'upload' && (
+        <SkeletonScanResult />
       )}
 
       {/* Upload Step */}
@@ -425,7 +453,7 @@ export function ScanPage() {
 
             {/* Tips — shown when no images have been added yet */}
             {imagePreviews.length === 0 && (
-              <div className="text-left bg-gray-50 rounded-xl p-4 space-y-2">
+              <div className="text-left bg-gray-200 rounded-xl p-4 space-y-2">
                 <p className="text-xs font-semibold text-gray-600">Tips for best results</p>
                 <ul className="space-y-1.5 text-xs text-gray-500">
                   <li>Lay receipt flat on a dark surface</li>
@@ -475,12 +503,25 @@ export function ScanPage() {
             </div>
 
             {/* Allergen warning header — only shown when household has allergens */}
-            {householdAllergens.length > 0 && (
-              <div className="mb-3 bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
-                <p className="text-xs font-bold text-red-800 uppercase tracking-wide">⚠️ Allergen check active</p>
-                <p className="text-xs text-red-700">
-                  Checking against: {householdAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}
-                </p>
+            {householdAllergens.length > 0 && !allergenWarningDismissed && (
+              <div className="mb-3 bg-red-50 border border-red-100 rounded-xl p-3 animate-allergen-pulse">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold text-red-700 uppercase tracking-wide">⚠️ Allergen check active</p>
+                    <p className="text-xs text-red-600">
+                      Checking against: {householdAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setAllergenWarningDismissed(true)}
+                    className="text-red-400 hover:text-red-600 flex-shrink-0 mt-0.5"
+                    aria-label="Dismiss allergen warning"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             )}
 
@@ -495,7 +536,7 @@ export function ScanPage() {
                 return (
                   <div
                     key={index}
-                    className={`py-2 border-b border-gray-100 last:border-0 ${hasAllergen ? 'bg-red-50 -mx-1 px-1 rounded-lg border-red-100' : ''}`}
+                    className={`py-2 border-b border-gray-200 last:border-0 ${hasAllergen ? 'bg-red-50 -mx-1 px-1 rounded-xl border-red-100 animate-allergen-pulse' : ''}`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
@@ -505,7 +546,7 @@ export function ScanPage() {
                             {itemName}
                           </p>
                           {item.nonFood && (
-                            <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>
+                            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>
                           )}
                         </div>
                         {item.translatedName !== item.originalCode && (
@@ -527,15 +568,15 @@ export function ScanPage() {
 
             <div className="mt-4 pt-3 border-t border-gray-200 flex justify-between items-center">
               <span className="font-semibold">Total</span>
-              <span className="text-xl font-bold text-basket-green-600">
+              <span className="text-xl font-bold text-basket-green-500">
                 {formatPrice(parsedReceipt.total)}
               </span>
             </div>
 
             {/* Allergen disclaimer — shown whenever allergens are in household profile */}
             {householdAllergens.length > 0 && (
-              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                <p className="text-xs text-amber-800 leading-relaxed">
+              <div className="mt-3 bg-amber-50 border border-amber-100 rounded-xl p-3">
+                <p className="text-xs text-amber-700 leading-relaxed">
                   <span className="font-bold">Important: </span>{ALLERGEN_DISCLAIMER}
                 </p>
               </div>
@@ -652,7 +693,7 @@ export function ScanPage() {
                   <div
                     key={index}
                     onClick={() => setSelectedBatchRecipe(recipe)}
-                    className="p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-basket-green-50 transition-colors"
+                    className="p-3 bg-gray-200 rounded-xl cursor-pointer hover:bg-basket-green-50 transition-colors"
                   >
                     <div className="flex items-start justify-between mb-2 gap-2">
                       <h4 className="font-semibold text-gray-900 leading-snug">{recipe.name}</h4>
@@ -684,7 +725,7 @@ export function ScanPage() {
               </p>
               <div className="space-y-3">
                 {smartSwaps.swaps.slice(0, 3).map((swap, index) => (
-                  <div key={index} className="flex items-start gap-3 p-2 bg-gray-50 rounded-lg">
+                  <div key={index} className="flex items-start gap-3 p-2 bg-gray-200 rounded-xl">
                     <div className="text-xl">
                       {swap.benefit === 'health' ? '🥗' : swap.benefit === 'budget' ? '💰' : '✨'}
                     </div>
@@ -716,8 +757,8 @@ export function ScanPage() {
 
       {/* Error Display */}
       {error && (
-        <Card className="bg-red-50 border-red-200">
-          <p className="text-red-700 text-sm">{error}</p>
+        <Card className="bg-red-50 border-red-100 animate-shake">
+          <p className="text-red-500 text-sm">{error}</p>
         </Card>
       )}
 
@@ -744,7 +785,7 @@ export function ScanPage() {
         title="Add Product Translation"
       >
         <div className="space-y-4">
-          <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+          <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700">
             <p className="font-medium">Tip: Aldi uses numeric product codes</p>
             <p className="text-blue-600 mt-1">Look for 5-6 digit numbers on your receipt (e.g., 852012, 701482)</p>
           </div>
@@ -774,7 +815,7 @@ export function ScanPage() {
           </div>
         </div>
       </Modal>
-    </div>
+    </AnimatedPage>
   );
 }
 

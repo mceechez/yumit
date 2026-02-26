@@ -3,6 +3,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Card, CardTitle } from '../components/ui/Card';
 import { Badge, GradeBadge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
+import { AnimatedPage } from '../components/AnimatedPage';
 import { getShoppingHistory, getStatistics } from '../services/storage';
 import { formatPrice, formatDate, formatRelativeDate, formatDateShort } from '../utils/formatters';
 import { getGrade } from '../services/nutrition';
@@ -20,7 +21,7 @@ export function HistoryPage() {
   }));
 
   return (
-    <div className="space-y-4">
+    <AnimatedPage className="space-y-4">
       <h2 className="text-xl font-bold text-gray-900">Shopping History</h2>
 
       {history.length === 0 ? (
@@ -62,32 +63,32 @@ export function HistoryPage() {
               <div className="h-48 mt-4">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#3A3A3C" />
                     <XAxis
                       dataKey="date"
-                      tick={{ fontSize: 12 }}
-                      stroke="#9ca3af"
+                      tick={{ fontSize: 12, fill: '#8E8E93' }}
+                      stroke="#3A3A3C"
                     />
                     <YAxis
-                      tick={{ fontSize: 12 }}
-                      stroke="#9ca3af"
+                      tick={{ fontSize: 12, fill: '#8E8E93' }}
+                      stroke="#3A3A3C"
                       tickFormatter={(value) => `£${value}`}
                     />
                     <Tooltip
                       formatter={(value) => [`£${value.toFixed(2)}`, 'Spend']}
-                      labelStyle={{ color: '#374151' }}
+                      labelStyle={{ color: '#EBEBF5' }}
                       contentStyle={{
-                        backgroundColor: 'white',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
+                        backgroundColor: '#2C2C2E',
+                        border: '1px solid #3A3A3C',
+                        borderRadius: '12px',
                       }}
                     />
                     <Line
                       type="monotone"
                       dataKey="spend"
-                      stroke="#16a34a"
+                      stroke="#4CAF50"
                       strokeWidth={2}
-                      dot={{ fill: '#16a34a', strokeWidth: 2 }}
+                      dot={{ fill: '#4CAF50', strokeWidth: 2 }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -102,32 +103,32 @@ export function HistoryPage() {
               <div className="h-48 mt-4">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#3A3A3C" />
                     <XAxis
                       dataKey="date"
-                      tick={{ fontSize: 12 }}
-                      stroke="#9ca3af"
+                      tick={{ fontSize: 12, fill: '#8E8E93' }}
+                      stroke="#3A3A3C"
                     />
                     <YAxis
                       domain={[0, 100]}
-                      tick={{ fontSize: 12 }}
-                      stroke="#9ca3af"
+                      tick={{ fontSize: 12, fill: '#8E8E93' }}
+                      stroke="#3A3A3C"
                     />
                     <Tooltip
                       formatter={(value) => [value, 'Score']}
-                      labelStyle={{ color: '#374151' }}
+                      labelStyle={{ color: '#EBEBF5' }}
                       contentStyle={{
-                        backgroundColor: 'white',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
+                        backgroundColor: '#2C2C2E',
+                        border: '1px solid #3A3A3C',
+                        borderRadius: '12px',
                       }}
                     />
                     <Line
                       type="monotone"
                       dataKey="score"
-                      stroke="#3b82f6"
+                      stroke="#0A84FF"
                       strokeWidth={2}
-                      dot={{ fill: '#3b82f6', strokeWidth: 2 }}
+                      dot={{ fill: '#0A84FF', strokeWidth: 2 }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -209,7 +210,7 @@ export function HistoryPage() {
                 {selectedTrip.items?.map((item, index) => (
                   <div
                     key={index}
-                    className="flex items-center justify-between py-1 text-sm border-b border-gray-50"
+                    className="flex items-center justify-between py-1 text-sm border-b border-gray-200"
                   >
                     <span>{item.translatedName || item.name || item.code}</span>
                     <span className="text-gray-500">{formatPrice(item.price)}</span>
@@ -220,8 +221,8 @@ export function HistoryPage() {
 
             {/* Batch Meals */}
             {selectedTrip.batchMeals?.length > 0 && (
-              <div className="bg-blue-50 rounded-lg p-3">
-                <h4 className="font-semibold text-blue-800 mb-2">Batch Cooking</h4>
+              <div className="bg-blue-50 rounded-xl p-3">
+                <h4 className="font-semibold text-blue-700 mb-2">Batch Cooking</h4>
                 <div className="flex flex-wrap gap-2">
                   {selectedTrip.batchMeals.map((meal, i) => (
                     <Badge key={i} variant="info">{meal}</Badge>
@@ -232,7 +233,7 @@ export function HistoryPage() {
           </div>
         )}
       </Modal>
-    </div>
+    </AnimatedPage>
   );
 }
 

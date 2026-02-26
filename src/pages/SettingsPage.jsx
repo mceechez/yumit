@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Card, CardTitle, CardDescription } from '../components/ui/Card';
+import { AnimatedPage } from '../components/AnimatedPage';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
@@ -27,7 +28,7 @@ function MemberForm({ initial, onSave, onCancel }) {
   const toggleNote = (v) => setNotes(p => p.includes(v) ? p.filter(n => n !== v) : [...p, v]);
 
   return (
-    <div className="bg-gray-50 rounded-xl p-4 space-y-4 border border-gray-200">
+    <div className="bg-gray-200 rounded-xl p-4 space-y-4 border border-gray-300">
       <div className="space-y-1">
         <label className="text-sm font-medium text-gray-700">Name <span className="text-gray-400 font-normal">(optional)</span></label>
         <input
@@ -35,7 +36,7 @@ function MemberForm({ initial, onSave, onCancel }) {
           placeholder="e.g. Mum, Theo…"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
+          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500"
         />
       </div>
       <div className="space-y-2">
@@ -44,7 +45,7 @@ function MemberForm({ initial, onSave, onCancel }) {
           {Object.entries(LIFE_STAGES).map(([key, stage]) => (
             <button key={key} onClick={() => { setLifeStage(key); setNotes([]); }}
               className={`flex flex-col items-center p-1.5 rounded-xl border-2 transition-colors text-center ${
-                lifeStage === key ? 'border-basket-green-500 bg-basket-green-50' : 'border-gray-200 bg-white hover:border-gray-300'
+                lifeStage === key ? 'border-basket-green-500 bg-basket-green-50' : 'border-gray-200 hover:border-gray-300'
               }`}>
               <span className="text-lg">{stage.emoji}</span>
               <span className="text-xs font-medium text-gray-700 leading-tight">{stage.label}</span>
@@ -277,7 +278,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
+    <AnimatedPage className="space-y-4">
       <h2 className="text-xl font-bold text-gray-900">Settings</h2>
 
       {/* ── Household Profile ── */}
@@ -296,7 +297,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
               const allergenCount = m.allergens?.length || 0;
               const dietaryCount = (m.dietaryPreferences?.length || 0) + (m.intolerances?.length || 0);
               return (
-                <div key={i} className="flex items-center gap-1.5 bg-gray-50 rounded-full px-3 py-1 text-sm">
+                <div key={i} className="flex items-center gap-1.5 bg-gray-200 rounded-full px-3 py-1 text-sm">
                   <span>{stage?.emoji}</span>
                   <span className="text-gray-700">{m.name || stage?.label}</span>
                   {m.notes?.length > 0 && <span className="text-gray-400">· {m.notes.join(', ')}</span>}
@@ -489,7 +490,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                         key={i}
                         onClick={() => handleTryAlternative(alt.url)}
                         disabled={importLoading}
-                        className="w-full flex items-center justify-between p-3 bg-white rounded-lg border border-amber-200 hover:border-basket-green-400 hover:bg-basket-green-50 transition-colors text-left disabled:opacity-50"
+                        className="w-full flex items-center justify-between p-3 rounded-xl border border-amber-100 hover:border-basket-green-400 hover:bg-basket-green-50 transition-colors text-left disabled:opacity-50"
                       >
                         <div className="text-sm">
                           <span className="font-semibold text-gray-900">{alt.siteName}</span>
@@ -542,9 +543,9 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                   {importResult.ingredients?.length || 0} items · scaled to {importResult.servings} portions
                 </span>
               </p>
-              <div className="divide-y divide-gray-50 border border-gray-100 rounded-lg overflow-hidden">
+              <div className="divide-y divide-gray-200 border border-gray-200 rounded-xl overflow-hidden">
                 {(importResult.ingredients || []).map((ing, i) => (
-                  <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm bg-white">
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
                     <span className="text-gray-500 shrink-0 w-20 text-xs tabular-nums">
                       {[ing.amount || ing.quantity, ing.unit].filter(Boolean).join(' ')}
                     </span>
@@ -684,7 +685,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                 <label className="text-sm font-medium text-gray-700">Supermarket</label>
                 <select value={editProfile.supermarket || 'Aldi'}
                   onChange={(e) => setEditProfile(p => ({ ...p, supermarket: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white">
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500">
                   {SUPERMARKETS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
@@ -720,7 +721,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
                 const stage = LIFE_STAGES[m.lifeStage];
                 const allergenCount = m.allergens?.length || 0;
                 return (
-                  <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
+                  <div key={i} className="flex items-center justify-between bg-gray-200 rounded-xl px-4 py-2.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span>{stage?.emoji}</span>
                       <span className="text-sm font-medium text-gray-900">{m.name || stage?.label}</span>
@@ -891,7 +892,7 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
           </div>
         </div>
       </Modal>
-    </div>
+    </AnimatedPage>
   );
 }
 
