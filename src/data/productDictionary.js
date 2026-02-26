@@ -58,12 +58,6 @@ export const textCodeDictionary = {
   'SWEETCORN FRZ': 'Frozen Sweetcorn',
 };
 
-// Combined default dictionary (numeric codes take priority)
-export const defaultProductDictionary = {
-  numeric: { ...numericCodeDictionary },
-  text: { ...textCodeDictionary },
-};
-
 // Check if a code is numeric (5-6 digits)
 export function isNumericCode(code) {
   return /^\d{5,6}$/.test(code?.toString().trim());

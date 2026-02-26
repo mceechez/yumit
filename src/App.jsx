@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Analytics } from '@vercel/analytics/react';
 import { getProfile } from './services/profile';
+import { runStartupMigration } from './services/storage';
+
+// Run once at startup — migrates legacy data and marks existing users as initialised
+runStartupMigration();
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import ScanPage from './pages/ScanPage';

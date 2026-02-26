@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { saveProfile, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS, ALLERGENS, DIETARY_PREFERENCES, INTOLERANCES } from '../services/profile';
+import { setInitialised } from '../services/storage';
 import { Button } from '../components/ui/Button';
 
 const TOTAL_STEPS = 4;
@@ -511,6 +512,7 @@ export function OnboardingPage({ onComplete }) {
       daysPerBatch: cooking.daysPerBatch,
     };
     saveProfile(profile);
+    setInitialised();
     onComplete();
   };
 
