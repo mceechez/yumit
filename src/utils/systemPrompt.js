@@ -1,4 +1,4 @@
-import { LIFE_STAGES } from '../services/profile';
+import { LIFE_STAGES, ALLERGENS, DIETARY_PREFERENCES, INTOLERANCES } from '../services/profile';
 
 function getNutritionalPriorities(members) {
   const priorities = [];
@@ -44,8 +44,34 @@ export function buildSystemPrompt(profile) {
     const stage = LIFE_STAGES[m.lifeStage];
     const notesStr = m.notes?.length ? `, ${m.notes.join(', ')}` : '';
     const name = m.name?.trim() || 'Household member';
-    return `- ${name}: ${stage?.label || 'Adult'} (${stage?.ageRange || ''})${notesStr}`;
+
+    const allergenLabels = (m.allergens || []).map(a => ALLERGENS.find(x => x.value === a)?.label || a);
+    const dietaryLabels = (m.dietaryPreferences || []).map(d => DIETARY_PREFERENCES.find(x => x.value === d)?.label || d);
+    const intoleranceLabels = (m.intolerances || []).map(t => INTOLERANCES.find(x => x.value === t)?.label || t);
+
+    const allergenStr = allergenLabels.length ? ` | ALLERGENS: ${allergenLabels.join(', ')}` : '';
+    const dietaryStr = dietaryLabels.length ? ` | DIETARY: ${dietaryLabels.join(', ')}` : '';
+    const intoleranceStr = intoleranceLabels.length ? ` | INTOLERANT: ${intoleranceLabels.join(', ')}` : '';
+
+    return `- ${name}: ${stage?.label || 'Adult'} (${stage?.ageRange || ''})${notesStr}${allergenStr}${dietaryStr}${intoleranceStr}`;
   }).join('\n') || '- No household members added yet';
+
+  // Build household-level dietary restriction summary
+  const allAllergens = [...new Set(members.flatMap(m => m.allergens || []))];
+  const allDietary = [...new Set([
+    ...members.flatMap(m => m.dietaryPreferences || []),
+    ...members.flatMap(m => (m.notes || []).filter(n => n === 'vegetarian' || n === 'vegan')),
+  ])];
+  const allIntolerances = [...new Set(members.flatMap(m => m.intolerances || []))];
+
+  const dietaryBlock = (allAllergens.length || allDietary.length || allIntolerances.length) ? `
+HOUSEHOLD DIETARY REQUIREMENTS — CRITICAL:
+${allAllergens.length ? `- ALLERGENS to avoid: ${allAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}` : ''}
+${allDietary.length ? `- Dietary preferences: ${allDietary.map(d => DIETARY_PREFERENCES.find(x => x.value === d)?.label || d).join(', ')}` : ''}
+${allIntolerances.length ? `- Intolerances: ${allIntolerances.map(t => INTOLERANCES.find(x => x.value === t)?.label || t).join(', ')}` : ''}
+- When suggesting recipes, ONLY include options safe for ALL household members
+- Flag any scanned product that contains or may contain a listed allergen
+- For allergen-flagged products, always suggest a free-from alternative from ${supermarket || 'their supermarket'}` : '';
 
   const priorities = getNutritionalPriorities(members);
   const priorityBlock = priorities.length
@@ -62,6 +88,7 @@ HOUSEHOLD PROFILE:
 
 HOUSEHOLD MEMBERS:
 ${memberLines}
+${dietaryBlock}
 ${priorityBlock}
 
 IMPORTANT RULES:

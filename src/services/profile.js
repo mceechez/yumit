@@ -23,6 +23,67 @@ export const ADULT_NOTES_OPTIONS = [
   { value: 'breastfeeding', label: 'Breastfeeding' },
 ];
 
+// ─── The 14 NHS declared allergens ───────────────────────────────────────────
+export const ALLERGENS = [
+  { value: 'gluten',     label: 'Gluten',     icon: '🌾', description: 'Wheat, barley, rye, oats' },
+  { value: 'dairy',      label: 'Dairy',      icon: '🥛', description: 'Milk and dairy products' },
+  { value: 'eggs',       label: 'Eggs',       icon: '🥚', description: 'Eggs and egg products' },
+  { value: 'peanuts',    label: 'Peanuts',    icon: '🥜', description: 'Peanuts and peanut products' },
+  { value: 'tree-nuts',  label: 'Tree Nuts',  icon: '🌰', description: 'Almonds, cashews, walnuts, etc.' },
+  { value: 'soya',       label: 'Soya',       icon: '🫘', description: 'Soya and soya products' },
+  { value: 'fish',       label: 'Fish',       icon: '🐟', description: 'Fish and fish products' },
+  { value: 'shellfish',  label: 'Shellfish',  icon: '🦐', description: 'Crustaceans and shellfish' },
+  { value: 'sesame',     label: 'Sesame',     icon: '🌱', description: 'Seeds and sesame oil' },
+  { value: 'celery',     label: 'Celery',     icon: '🥬', description: 'Celery and celeriac' },
+  { value: 'mustard',    label: 'Mustard',    icon: '🌻', description: 'Mustard and mustard products' },
+  { value: 'lupin',      label: 'Lupin',      icon: '🌿', description: 'Lupin seeds and flour' },
+  { value: 'molluscs',   label: 'Molluscs',   icon: '🐚', description: 'Squid, mussels, oysters, etc.' },
+  { value: 'sulphites',  label: 'Sulphites',  icon: '🍷', description: 'Sulphur dioxide ≥10ppm' },
+];
+
+// ─── Dietary preferences ──────────────────────────────────────────────────────
+export const DIETARY_PREFERENCES = [
+  { value: 'vegetarian',       label: 'Vegetarian',       icon: '🥗' },
+  { value: 'vegan',            label: 'Vegan',            icon: '🌱' },
+  { value: 'halal',            label: 'Halal',            icon: '☪️'  },
+  { value: 'kosher',           label: 'Kosher',           icon: '✡️'  },
+  { value: 'low-fodmap',       label: 'Low FODMAP',       icon: '🫁' },
+  { value: 'diabetic-friendly',label: 'Diabetic Friendly',icon: '🩺' },
+  { value: 'low-sodium',       label: 'Low Sodium',       icon: '🧂' },
+  { value: 'low-cholesterol',  label: 'Low Cholesterol',  icon: '❤️' },
+];
+
+// ─── Intolerances (separate from allergies) ───────────────────────────────────
+export const INTOLERANCES = [
+  { value: 'lactose',   label: 'Lactose Intolerant',   icon: '🥛' },
+  { value: 'fructose',  label: 'Fructose Intolerant',  icon: '🍎' },
+  { value: 'histamine', label: 'Histamine Intolerant', icon: '🤧' },
+];
+
+/**
+ * Returns a flat list of all allergen/preference/intolerance values
+ * across the entire household, deduplicated. Used for AI prompting.
+ */
+export function getHouseholdDietaryFlags(members) {
+  const allergens = new Set();
+  const dietary = new Set();
+  const intolerances = new Set();
+  (members || []).forEach(m => {
+    (m.allergens || []).forEach(a => allergens.add(a));
+    (m.dietaryPreferences || []).forEach(d => dietary.add(d));
+    // Also include notes-based preferences for backward compatibility
+    (m.notes || []).forEach(n => {
+      if (n === 'vegetarian' || n === 'vegan') dietary.add(n);
+    });
+    (m.intolerances || []).forEach(i => intolerances.add(i));
+  });
+  return {
+    allergens: [...allergens],
+    dietary: [...dietary],
+    intolerances: [...intolerances],
+  };
+}
+
 // ─── Profile ─────────────────────────────────────────────────────────────────
 export function getProfile() {
   try {

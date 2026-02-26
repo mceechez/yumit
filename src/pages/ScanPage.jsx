@@ -14,7 +14,71 @@ import {
 import { translateCode } from '../data/productDictionary';
 import { formatPrice } from '../utils/formatters';
 import { getProductDictionary, addProductTranslation, addShoppingTrip, saveFavouriteRecipe, addMeal } from '../services/storage';
+import { getProfile, ALLERGENS } from '../services/profile';
 import RecipeDetailPage from './RecipeDetailPage';
+
+// ─── Allergen keyword map ─────────────────────────────────────────────────────
+// Maps allergen values to keywords that may appear in product names
+const ALLERGEN_KEYWORDS = {
+  gluten:    ['bread', 'flour', 'pasta', 'wheat', 'barley', 'rye', 'oat', 'biscuit', 'cake', 'pastry', 'cereal', 'sausage', 'roll', 'wrap', 'naan', 'pitta', 'cracker', 'crouton', 'couscous'],
+  dairy:     ['milk', 'cheese', 'butter', 'cream', 'yogurt', 'yoghurt', 'fromage', 'whey', 'lactose', 'cheddar', 'mozzarella', 'brie', 'camembert', 'custard'],
+  eggs:      ['egg', 'eggs', 'mayonnaise', 'mayo', 'meringue', 'omelette'],
+  peanuts:   ['peanut', 'groundnut', 'satay'],
+  'tree-nuts':['almond', 'cashew', 'walnut', 'hazelnut', 'pistachio', 'pecan', 'brazil nut', 'macadamia', 'nut butter'],
+  soya:      ['soya', 'soy', 'tofu', 'edamame', 'miso', 'tempeh'],
+  fish:      ['fish', 'salmon', 'tuna', 'cod', 'haddock', 'mackerel', 'sardine', 'anchovy', 'trout', 'bass', 'tilapia'],
+  shellfish: ['prawn', 'shrimp', 'crab', 'lobster', 'crayfish', 'langoustine', 'scallop'],
+  sesame:    ['sesame', 'tahini', 'hummus', 'houmous'],
+  celery:    ['celery', 'celeriac', 'celery salt'],
+  mustard:   ['mustard'],
+  lupin:     ['lupin'],
+  molluscs:  ['squid', 'mussel', 'oyster', 'clam', 'cockle', 'octopus', 'whelk', 'snail'],
+  sulphites: ['wine', 'cider', 'vinegar', 'dried fruit', 'raisin', 'apricot', 'prune'],
+};
+
+/**
+ * Checks item name against household allergens.
+ * Returns array of { allergenValue, allergenLabel, severity } where severity is 'contains' or 'mayContain'.
+ */
+function checkItemAllergens(itemName, householdAllergens) {
+  if (!itemName || !householdAllergens?.length) return [];
+  const name = itemName.toLowerCase();
+  const flags = [];
+  for (const allergenValue of householdAllergens) {
+    const keywords = ALLERGEN_KEYWORDS[allergenValue] || [];
+    const match = keywords.find(kw => name.includes(kw));
+    if (match) {
+      const allergenDef = ALLERGENS.find(a => a.value === allergenValue);
+      flags.push({
+        allergenValue,
+        allergenLabel: allergenDef?.label || allergenValue,
+        allergenIcon: allergenDef?.icon || '⚠️',
+        severity: 'contains',
+      });
+    }
+  }
+  return flags;
+}
+
+const ALLERGEN_DISCLAIMER = 'Yumit\'s allergen information is a helpful guide only. Always check product labels directly. Formulations change without notice. Never rely solely on this app for allergen management if you have a severe allergy.';
+
+// ─── Allergen flag badge ──────────────────────────────────────────────────────
+function AllergenFlag({ flags, personNames }) {
+  if (!flags?.length) return null;
+  return (
+    <div className="mt-1 space-y-0.5">
+      {flags.map((f, i) => (
+        <div key={i} className="flex items-start gap-1 text-xs">
+          <span className="bg-red-600 text-white rounded px-1 py-0.5 font-bold shrink-0">⚠️ ALLERGEN</span>
+          <span className="text-red-700 font-medium">
+            {f.allergenIcon} {f.allergenLabel}
+            {personNames?.length ? ` — flagged for ${personNames.join(', ')}` : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ─── "What the science says" collapsible ─────────────────────────────────────
 function ScienceInsights({ insights }) {
@@ -70,6 +134,17 @@ export function ScanPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const { loading, error, parseReceipt } = useClaudeAI();
+  const profile = getProfile();
+  // Build a flat list of all allergens across all household members
+  const householdAllergens = [...new Set((profile?.members || []).flatMap(m => m.allergens || []))];
+  // Map allergen value → names of people who have it
+  const allergenPersonMap = {};
+  (profile?.members || []).forEach(m => {
+    (m.allergens || []).forEach(a => {
+      if (!allergenPersonMap[a]) allergenPersonMap[a] = [];
+      if (m.name) allergenPersonMap[a].push(m.name);
+    });
+  });
 
   const [step, setStep] = useState('upload'); // upload, parsed, analyzed
   const [imagePreviews, setImagePreviews] = useState([]); // Support multiple images
@@ -398,35 +473,73 @@ export function ScanPage() {
                 + Add Code
               </Button>
             </div>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {parsedReceipt.items.map((item, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0"
-                >
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">
-                      {item.translatedName || item.name}
-                    </p>
-                    {item.translatedName !== item.originalCode && (
-                      <p className="text-xs text-gray-400">{item.originalCode}</p>
-                    )}
+
+            {/* Allergen warning header — only shown when household has allergens */}
+            {householdAllergens.length > 0 && (
+              <div className="mb-3 bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
+                <p className="text-xs font-bold text-red-800 uppercase tracking-wide">⚠️ Allergen check active</p>
+                <p className="text-xs text-red-700">
+                  Checking against: {householdAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {parsedReceipt.items.map((item, index) => {
+                const itemName = item.translatedName || item.name;
+                const allergenFlags = checkItemAllergens(itemName, householdAllergens);
+                const personNames = allergenFlags.length
+                  ? [...new Set(allergenFlags.flatMap(f => allergenPersonMap[f.allergenValue] || []))]
+                  : [];
+                const hasAllergen = allergenFlags.length > 0;
+                return (
+                  <div
+                    key={index}
+                    className={`py-2 border-b border-gray-100 last:border-0 ${hasAllergen ? 'bg-red-50 -mx-1 px-1 rounded-lg border-red-100' : ''}`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {hasAllergen && <span className="text-base">⚠️</span>}
+                          <p className={`font-medium ${hasAllergen ? 'text-red-900' : 'text-gray-900'}`}>
+                            {itemName}
+                          </p>
+                          {item.nonFood && (
+                            <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>
+                          )}
+                        </div>
+                        {item.translatedName !== item.originalCode && (
+                          <p className="text-xs text-gray-400">{item.originalCode}</p>
+                        )}
+                        <AllergenFlag flags={allergenFlags} personNames={personNames} />
+                      </div>
+                      <div className="text-right ml-2 shrink-0">
+                        <p className="font-medium">{formatPrice(item.price)}</p>
+                        {item.quantity > 1 && (
+                          <p className="text-xs text-gray-400">x{item.quantity}</p>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-medium">{formatPrice(item.price)}</p>
-                    {item.quantity > 1 && (
-                      <p className="text-xs text-gray-400">x{item.quantity}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+
             <div className="mt-4 pt-3 border-t border-gray-200 flex justify-between items-center">
               <span className="font-semibold">Total</span>
               <span className="text-xl font-bold text-basket-green-600">
                 {formatPrice(parsedReceipt.total)}
               </span>
             </div>
+
+            {/* Allergen disclaimer — shown whenever allergens are in household profile */}
+            {householdAllergens.length > 0 && (
+              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  <span className="font-bold">Important: </span>{ALLERGEN_DISCLAIMER}
+                </p>
+              </div>
+            )}
           </Card>
 
           {/* Actions */}

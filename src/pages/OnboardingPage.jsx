@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { saveProfile, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS } from '../services/profile';
+import { saveProfile, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS, ALLERGENS, DIETARY_PREFERENCES, INTOLERANCES } from '../services/profile';
 import { Button } from '../components/ui/Button';
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 4;
 
 // ─── Step 1: Family basics ────────────────────────────────────────────────────
 function StepBasics({ data, onChange }) {
@@ -31,6 +31,7 @@ function StepBasics({ data, onChange }) {
           onChange={(e) => onChange({ supermarket: e.target.value })}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500 bg-white"
         >
+          <option value="">Select your supermarket…</option>
           {SUPERMARKETS.map(s => (
             <option key={s} value={s}>{s}</option>
           ))}
@@ -328,26 +329,165 @@ function ProgressBar({ step }) {
   );
 }
 
+// ─── Step 4: Dietary requirements ─────────────────────────────────────────────
+function StepDietary({ members, onUpdateMember }) {
+  const [openMember, setOpenMember] = useState(0);
+
+  const toggle = (memberIdx, field, value) => {
+    const m = members[memberIdx];
+    const current = m[field] || [];
+    const updated = current.includes(value)
+      ? current.filter(v => v !== value)
+      : [...current, value];
+    onUpdateMember(memberIdx, { [field]: updated });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Dietary requirements</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Select any allergens, dietary preferences, or intolerances for each person.
+          All are optional — tap a person to expand.
+        </p>
+      </div>
+
+      {members.map((m, i) => {
+        const stage = LIFE_STAGES[m.lifeStage];
+        const totalFlags = (m.allergens?.length || 0) + (m.dietaryPreferences?.length || 0) + (m.intolerances?.length || 0);
+        const isOpen = openMember === i;
+        return (
+          <div key={i} className="border border-gray-200 rounded-xl overflow-hidden">
+            <button
+              onClick={() => setOpenMember(isOpen ? -1 : i)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{stage?.emoji}</span>
+                <span className="font-medium text-gray-900">{m.name || stage?.label}</span>
+                {totalFlags > 0 && (
+                  <span className="text-xs bg-red-100 text-red-700 font-medium px-2 py-0.5 rounded-full">
+                    {totalFlags} flag{totalFlags !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <span className="text-gray-400 text-sm">{isOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {isOpen && (
+              <div className="px-4 pb-4 space-y-4 border-t border-gray-100 bg-gray-50">
+                {/* Allergens */}
+                <div className="space-y-2 pt-3">
+                  <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
+                    Allergens (NHS 14)
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ALLERGENS.map(a => {
+                      const active = (m.allergens || []).includes(a.value);
+                      return (
+                        <button
+                          key={a.value}
+                          onClick={() => toggle(i, 'allergens', a.value)}
+                          title={a.description}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                            active
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'border-gray-300 text-gray-600 hover:border-red-300 hover:bg-red-50'
+                          }`}
+                        >
+                          <span>{a.icon}</span> {a.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Dietary Preferences */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-basket-green-700 uppercase tracking-wide">
+                    Dietary Preferences
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DIETARY_PREFERENCES.map(d => {
+                      const active = (m.dietaryPreferences || []).includes(d.value);
+                      return (
+                        <button
+                          key={d.value}
+                          onClick={() => toggle(i, 'dietaryPreferences', d.value)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                            active
+                              ? 'bg-basket-green-600 text-white border-basket-green-600'
+                              : 'border-gray-300 text-gray-600 hover:border-basket-green-300 hover:bg-basket-green-50'
+                          }`}
+                        >
+                          <span>{d.icon}</span> {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Intolerances */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">
+                    Intolerances
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {INTOLERANCES.map(t => {
+                      const active = (m.intolerances || []).includes(t.value);
+                      return (
+                        <button
+                          key={t.value}
+                          onClick={() => toggle(i, 'intolerances', t.value)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                            active
+                              ? 'bg-amber-500 text-white border-amber-500'
+                              : 'border-gray-300 text-gray-600 hover:border-amber-300 hover:bg-amber-50'
+                          }`}
+                        >
+                          <span>{t.icon}</span> {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <p className="text-xs text-gray-400 text-center">
+        You can update these at any time in Settings.
+      </p>
+    </div>
+  );
+}
+
 // ─── Main onboarding wizard ───────────────────────────────────────────────────
 export function OnboardingPage({ onComplete }) {
   const [step, setStep] = useState(1);
 
   const [basics, setBasics] = useState({
     householdName: '',
-    supermarket: 'Aldi',
-    budgetMin: 90,
-    budgetMax: 120,
+    supermarket: '',
+    budgetMin: 100,
+    budgetMax: 100,
   });
 
-  const [members, setMembers] = useState([]);
+  // Start with 1 adult (reasonable assumption), no name
+  const [members, setMembers] = useState([
+    { name: '', lifeStage: 'adult', notes: [], allergens: [], dietaryPreferences: [], intolerances: [] },
+  ]);
 
   const [cooking, setCooking] = useState({
-    batchCooksPerWeek: 2,
-    daysPerBatch: 2,
+    batchCooksPerWeek: null,
+    daysPerBatch: null,
   });
 
-  const canAdvanceStep1 = basics.householdName.trim().length > 0;
+  const canAdvanceStep1 = basics.householdName.trim().length > 0 && basics.supermarket !== '';
   const canAdvanceStep2 = members.length > 0;
+  const canAdvanceStep3 = cooking.batchCooksPerWeek !== null && cooking.daysPerBatch !== null;
 
   const handleNext = () => {
     if (step < TOTAL_STEPS) setStep(s => s + 1);
@@ -355,6 +495,10 @@ export function OnboardingPage({ onComplete }) {
 
   const handleBack = () => {
     if (step > 1) setStep(s => s - 1);
+  };
+
+  const handleUpdateMember = (index, patch) => {
+    setMembers(prev => prev.map((m, i) => i === index ? { ...m, ...patch } : m));
   };
 
   const handleFinish = () => {
@@ -372,7 +516,8 @@ export function OnboardingPage({ onComplete }) {
 
   const isNextDisabled =
     (step === 1 && !canAdvanceStep1) ||
-    (step === 2 && !canAdvanceStep2);
+    (step === 2 && !canAdvanceStep2) ||
+    (step === 3 && !canAdvanceStep3);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-basket-green-50 to-white flex items-center justify-center p-4">
@@ -394,12 +539,15 @@ export function OnboardingPage({ onComplete }) {
           {step === 2 && (
             <StepMembers
               members={members}
-              onAdd={(m) => setMembers(prev => [...prev, m])}
+              onAdd={(m) => setMembers(prev => [...prev, { ...m, allergens: [], dietaryPreferences: [], intolerances: [] }])}
               onRemove={(i) => setMembers(prev => prev.filter((_, idx) => idx !== i))}
             />
           )}
           {step === 3 && (
             <StepCooking data={cooking} onChange={(patch) => setCooking(c => ({ ...c, ...patch }))} />
+          )}
+          {step === 4 && (
+            <StepDietary members={members} onUpdateMember={handleUpdateMember} />
           )}
         </div>
 

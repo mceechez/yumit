@@ -15,6 +15,7 @@ import {
 import {
   getProfile, saveProfile, clearProfile,
   getUsage, LIFE_STAGES, SUPERMARKETS, ADULT_NOTES_OPTIONS,
+  ALLERGENS, DIETARY_PREFERENCES, INTOLERANCES,
 } from '../services/profile';
 
 // ─── Inline member form (reused from Onboarding) ─────────────────────────────
@@ -104,7 +105,8 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   const [newCode, setNewCode]                     = useState('');
   const [newName, setNewName]                     = useState('');
 
-  const [showResetConfirm, setShowResetConfirm]   = useState(false);
+  const [showResetConfirm, setShowResetConfirm]         = useState(false);
+  const [showResetProfileConfirm, setShowResetProfileConfirm] = useState(false);
 
   // Recipe import
   const [recipeUrl, setRecipeUrl]                 = useState('');
@@ -176,6 +178,12 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
   };
 
   // ── Reset ────────────────────────────────────────────────────────────────
+  const handleResetProfile = () => {
+    clearProfile();
+    setShowResetProfileConfirm(false);
+    onProfileChange?.();
+  };
+
   const handleReset = () => {
     resetToDefaults();
     clearProfile();
@@ -272,12 +280,12 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
     <div className="space-y-4">
       <h2 className="text-xl font-bold text-gray-900">Settings</h2>
 
-      {/* ── Family Profile ── */}
+      {/* ── Household Profile ── */}
       <Card>
         <div className="flex items-start justify-between mb-3">
           <div>
-            <CardTitle>Family Profile</CardTitle>
-            <CardDescription>{profile?.familyName || 'Your family'} · {profile?.supermarket || 'Aldi'}</CardDescription>
+            <CardTitle>Household Profile</CardTitle>
+            <CardDescription>{profile?.householdName || 'Your household'} · {profile?.supermarket || ''}</CardDescription>
           </div>
           <Button variant="ghost" size="sm" onClick={openProfileModal}>Edit</Button>
         </div>
@@ -285,11 +293,23 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
           <div className="flex flex-wrap gap-2 mt-2">
             {profile.members.map((m, i) => {
               const stage = LIFE_STAGES[m.lifeStage];
+              const allergenCount = m.allergens?.length || 0;
+              const dietaryCount = (m.dietaryPreferences?.length || 0) + (m.intolerances?.length || 0);
               return (
                 <div key={i} className="flex items-center gap-1.5 bg-gray-50 rounded-full px-3 py-1 text-sm">
                   <span>{stage?.emoji}</span>
                   <span className="text-gray-700">{m.name || stage?.label}</span>
                   {m.notes?.length > 0 && <span className="text-gray-400">· {m.notes.join(', ')}</span>}
+                  {allergenCount > 0 && (
+                    <span className="bg-red-100 text-red-700 text-xs px-1.5 py-0.5 rounded-full font-medium">
+                      {allergenCount} allergen{allergenCount !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {dietaryCount > 0 && (
+                    <span className="bg-basket-green-100 text-basket-green-700 text-xs px-1.5 py-0.5 rounded-full font-medium">
+                      {dietaryCount} dietary
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -299,6 +319,14 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
           <span>Budget: £{profile?.budget?.min ?? settings.budgetMin}–£{profile?.budget?.max ?? settings.budgetMax}</span>
           <span>Batch cook: {profile?.batchCooksPerWeek ?? 2}× /week · {profile?.daysPerBatch ?? 2} days</span>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowResetProfileConfirm(true)}
+          className="mt-3 text-amber-600 border-amber-300 hover:bg-amber-50"
+        >
+          Reset Profile
+        </Button>
       </Card>
 
       {/* ── API Key card hidden for testing phase — key is managed server-side ── */}
@@ -628,12 +656,12 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
 
       {/* ── App Info ── */}
       <Card className="text-center text-sm text-gray-500">
-        <p className="font-medium text-gray-700">FamilyBasket</p>
-        <p>Family Grocery Intelligence Tool</p>
+        <p className="font-medium text-gray-700">Yumit</p>
+        <p>Shop smarter. Eat better.</p>
         {profile && (
           <>
-            <p className="mt-2">👨‍👩‍👦‍👦 {profile.familyName}</p>
-            <p>🛒 {profile.supermarket}</p>
+            <p className="mt-2">🛒 {profile.householdName}</p>
+            <p>{profile.supermarket}</p>
             <p>💰 Budget: £{profile.budget?.min}–£{profile.budget?.max}/week</p>
           </>
         )}
@@ -642,14 +670,14 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
       {/* ══ MODALS ══════════════════════════════════════════════════════════ */}
 
       {/* Edit Profile Modal */}
-      <Modal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} title="Edit Family Profile" size="lg">
+      <Modal isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} title="Edit Household Profile" size="lg">
         {editProfile && (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1 col-span-2">
-                <label className="text-sm font-medium text-gray-700">Family name</label>
-                <input type="text" value={editProfile.familyName || ''}
-                  onChange={(e) => setEditProfile(p => ({ ...p, familyName: e.target.value }))}
+                <label className="text-sm font-medium text-gray-700">Household name</label>
+                <input type="text" value={editProfile.householdName || ''}
+                  onChange={(e) => setEditProfile(p => ({ ...p, householdName: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-basket-green-500" />
               </div>
               <div className="space-y-1">
@@ -687,15 +715,21 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
 
             {/* Members */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-700">Family members</label>
+              <label className="text-sm font-medium text-gray-700">Household members</label>
               {(editProfile.members || []).map((m, i) => {
                 const stage = LIFE_STAGES[m.lifeStage];
+                const allergenCount = m.allergens?.length || 0;
                 return (
                   <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span>{stage?.emoji}</span>
                       <span className="text-sm font-medium text-gray-900">{m.name || stage?.label}</span>
                       <span className="text-xs text-gray-400">{stage?.ageRange}{m.notes?.length ? ` · ${m.notes.join(', ')}` : ''}</span>
+                      {allergenCount > 0 && (
+                        <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium">
+                          {allergenCount} allergen{allergenCount !== 1 ? 's' : ''}
+                        </span>
+                      )}
                     </div>
                     <button onClick={() => handleRemoveMemberFromEdit(i)} className="text-gray-300 hover:text-red-400 text-lg">×</button>
                   </div>
@@ -709,10 +743,85 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
               ) : (
                 <button onClick={() => setShowMemberForm(true)}
                   className="w-full border-2 border-dashed border-gray-300 rounded-xl py-3 text-sm text-gray-500 hover:border-basket-green-400 hover:text-basket-green-600 transition-colors">
-                  + Add family member
+                  + Add household member
                 </button>
               )}
             </div>
+
+            {/* Dietary Requirements per member */}
+            {(editProfile.members || []).length > 0 && (
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-gray-700">Dietary requirements</label>
+                {(editProfile.members || []).map((m, i) => {
+                  const stage = LIFE_STAGES[m.lifeStage];
+                  const toggleDiet = (field, value) => {
+                    const current = m[field] || [];
+                    const updated = current.includes(value)
+                      ? current.filter(v => v !== value)
+                      : [...current, value];
+                    setEditProfile(p => ({
+                      ...p,
+                      members: p.members.map((mem, idx) => idx === i ? { ...mem, [field]: updated } : mem),
+                    }));
+                  };
+                  return (
+                    <div key={i} className="border border-gray-200 rounded-xl p-3 space-y-3">
+                      <p className="text-sm font-medium text-gray-800 flex items-center gap-2">
+                        <span>{stage?.emoji}</span>
+                        {m.name || stage?.label}
+                      </p>
+                      <div>
+                        <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1.5">Allergens</p>
+                        <div className="flex flex-wrap gap-1">
+                          {ALLERGENS.map(a => {
+                            const active = (m.allergens || []).includes(a.value);
+                            return (
+                              <button key={a.value} onClick={() => toggleDiet('allergens', a.value)}
+                                title={a.description}
+                                className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border transition-colors ${active ? 'bg-red-600 text-white border-red-600' : 'border-gray-300 text-gray-600 hover:border-red-300'}`}>
+                                {a.icon} {a.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-basket-green-700 uppercase tracking-wide mb-1.5">Dietary preferences</p>
+                        <div className="flex flex-wrap gap-1">
+                          {DIETARY_PREFERENCES.map(d => {
+                            const active = (m.dietaryPreferences || []).includes(d.value);
+                            return (
+                              <button key={d.value} onClick={() => toggleDiet('dietaryPreferences', d.value)}
+                                className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border transition-colors ${active ? 'bg-basket-green-600 text-white border-basket-green-600' : 'border-gray-300 text-gray-600 hover:border-basket-green-300'}`}>
+                                {d.icon} {d.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1.5">Intolerances</p>
+                        <div className="flex flex-wrap gap-1">
+                          {INTOLERANCES.map(t => {
+                            const active = (m.intolerances || []).includes(t.value);
+                            return (
+                              <button key={t.value} onClick={() => toggleDiet('intolerances', t.value)}
+                                className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border transition-colors ${active ? 'bg-amber-500 text-white border-amber-500' : 'border-gray-300 text-gray-600 hover:border-amber-300'}`}>
+                                {t.icon} {t.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 leading-relaxed">
+                  <span className="font-bold">Important: </span>
+                  Yumit&apos;s allergen information is a helpful guide only. Always check product labels directly. Formulations change without notice. Never rely solely on this app for allergen management if you have a severe allergy.
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setShowProfileModal(false)} className="flex-1">Cancel</Button>
@@ -755,11 +864,25 @@ export function SettingsPage({ onProfileChange, onApiKeyChange }) {
         </div>
       </Modal>
 
+      {/* Reset Profile Modal */}
+      <Modal isOpen={showResetProfileConfirm} onClose={() => setShowResetProfileConfirm(false)} title="Reset Household Profile?">
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            This will clear your household profile and return you to the setup screen.
+            Your shopping history, saved recipes, and meal preferences will be kept.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowResetProfileConfirm(false)} className="flex-1">Cancel</Button>
+            <Button variant="danger" onClick={handleResetProfile} className="flex-1">Reset Profile</Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Reset Confirm Modal */}
       <Modal isOpen={showResetConfirm} onClose={() => setShowResetConfirm(false)} title="Reset All Data?">
         <div className="space-y-4">
           <p className="text-gray-600">
-            This will clear all shopping history, meal preferences, saved recipes, your family profile,
+            This will clear all shopping history, meal preferences, saved recipes, your household profile,
             and API key. This cannot be undone.
           </p>
           <div className="flex gap-3">

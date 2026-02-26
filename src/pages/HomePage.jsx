@@ -4,20 +4,22 @@ import { getStatistics, getShoppingHistory } from '../services/storage';
 import { formatPrice, formatRelativeDate } from '../utils/formatters';
 import { GradeBadge } from '../components/ui/Badge';
 import { getGrade } from '../services/nutrition';
+import { getProfile, LIFE_STAGES } from '../services/profile';
 
 export function HomePage() {
   const stats = getStatistics();
   const recentShop = getShoppingHistory()[0];
+  const profile = getProfile();
 
   return (
     <div className="space-y-4">
       {/* Welcome */}
       <div className="text-center py-4">
         <h2 className="text-2xl font-bold text-gray-900">
-          Welcome to FamilyBasket
+          {profile?.householdName ? `Welcome back, ${profile.householdName}` : 'Welcome to Yumit'}
         </h2>
         <p className="text-gray-500 mt-1">
-          Your family grocery intelligence tool
+          Shop smarter. Eat better.
         </p>
       </div>
 
@@ -121,18 +123,24 @@ export function HomePage() {
         </Link>
       </div>
 
-      {/* Family Info */}
-      <Card className="bg-basket-green-50 border-basket-green-200">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">👨‍👩‍👦‍👦</span>
-          <div>
-            <p className="font-medium text-basket-green-800">Family of 4</p>
-            <p className="text-sm text-basket-green-600">
-              2 adults, Theo & Lucas • Aldi Chingford
-            </p>
+      {/* Household Info */}
+      {profile && (
+        <Card className="bg-basket-green-50 border-basket-green-200">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">🛒</span>
+            <div>
+              <p className="font-medium text-basket-green-800">{profile.householdName}</p>
+              <p className="text-sm text-basket-green-600">
+                {profile.members?.length > 0
+                  ? profile.members.map(m => m.name || LIFE_STAGES[m.lifeStage]?.label).filter(Boolean).join(', ')
+                  : `${profile.members?.length || 0} household member${profile.members?.length !== 1 ? 's' : ''}`
+                }
+                {profile.supermarket ? ` · ${profile.supermarket}` : ''}
+              </p>
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

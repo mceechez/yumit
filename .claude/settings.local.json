@@ -10,7 +10,8 @@
       "Bash(echo no process on 3001:2)",
       "Bash(cd:*)",
       "WebSearch",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(cd /c/Users/eys01/family-basket && npm run lint 2>&1)"
     ]
   }
 }
