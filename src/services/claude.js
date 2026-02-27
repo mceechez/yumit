@@ -443,6 +443,131 @@ export async function findRecipeAlternatives(recipeName) {
   }
 }
 
+// ─── Rate meals nutritionally (one batch call, cached) ────────────────────────
+export async function rateMeals(meals) {
+  const profile = getProfile();
+  const mealList = meals.map(m => {
+    if (m.ingredients?.length) {
+      return `- ${m.name}: ${m.ingredients.slice(0, 6).map(i => `${i.amount || ''} ${i.unit || ''} ${i.item || ''}`.trim()).join(', ')}`;
+    }
+    return `- ${m.name}`;
+  }).join('\n');
+
+  return claudeCallParsed({
+    model: MODEL,
+    max_tokens: 1000,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Rate each of these meals nutritionally using ONLY these three tiers:
+
+STRONG (3 stars): Contains clear protein source + at least one vegetable + predominantly whole food ingredients
+BALANCED (2 stars): Has some nutritional value but missing protein OR vegetables OR is partially processed
+LIGHT (1 star): Low protein, minimal vegetables, carb or fat heavy, or predominantly processed ingredients
+
+Return JSON only:
+{
+  "ratings": [
+    { "meal_name": "exact name", "stars": 3, "one_line": "High protein, good veg variety, whole food led" }
+  ]
+}
+
+Meals to rate:
+${mealList}
+
+Return ONLY the JSON object.`,
+    }],
+  });
+}
+
+// ─── Get 3 AI meal suggestions with ratings ────────────────────────────────────
+export async function getMealSuggestions(nutritionGap = '') {
+  const profile = getProfile();
+  const gapInstruction = nutritionGap
+    ? `\nCurrent selection nutritional gap: ${nutritionGap}\nBias suggestions toward meals that address this gap.\n`
+    : '';
+
+  return claudeCallParsed({
+    model: MODEL,
+    max_tokens: 600,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Suggest exactly 3 meals for this household's batch cooking week. Make them practical UK meals suitable for batch cooking.
+${gapInstruction}
+Rate each nutritionally:
+- STRONG (3 stars): clear protein + vegetable + whole food led
+- BALANCED (2 stars): decent but missing one element
+- LIGHT (1 star): carb-heavy, low protein/veg, or mostly processed
+
+Return JSON only:
+{
+  "suggestions": [
+    { "name": "Meal name", "cuisine": "British", "stars": 3, "one_line": "High protein, good veg variety" }
+  ]
+}
+
+Return ONLY the JSON object.`,
+    }],
+  });
+}
+
+// ─── Generate consolidated shopping list from selected meals ───────────────────
+export async function generateMealShoppingList({ meals, portions, budget }) {
+  const profile = getProfile();
+
+  const mealDetails = meals.map(m => {
+    if (m.recipe?.ingredients?.length) {
+      const ingList = m.recipe.ingredients
+        .map(i => `${i.amount || ''} ${i.unit || ''} ${i.item || ''}`.trim())
+        .join(', ');
+      return `${m.name} (${portions} portions — has recipe):\n  Ingredients: ${ingList}`;
+    }
+    return `${m.name} (${portions} portions — generate ingredients)`;
+  }).join('\n\n');
+
+  return claudeCallParsed({
+    model: MODEL,
+    max_tokens: 3000,
+    system: buildSystemPrompt(profile),
+    messages: [{
+      role: 'user',
+      content: `Generate a consolidated shopping list for these meals, scaled to ${portions} portions each.
+
+MEALS:
+${mealDetails}
+
+BUDGET: £${budget}
+
+Instructions:
+- For meals marked "generate ingredients": create realistic ingredient lists first
+- Combine duplicate ingredients across all meals into single quantities
+- Scale all amounts to ${portions} portions per meal
+- Group by supermarket aisle category
+- Estimate realistic UK supermarket prices per item
+- Flag items that may conflict with household allergens from the system prompt (allergen_flag: true, allergen_name: "allergen")
+
+Return JSON only:
+{
+  "groups": [
+    {
+      "category": "Meat & Fish",
+      "items": [
+        { "name": "Chicken thigh fillets", "quantity": "1.2kg", "estimated_price": 4.50, "allergen_flag": false, "allergen_name": null }
+      ]
+    }
+  ],
+  "total_estimated_cost": 0.00,
+  "budget_remaining": 0.00,
+  "budget_status": "under"
+}
+
+budget_status must be exactly: "under", "tight" (within £3 of budget), or "over"
+Return ONLY the JSON object.`,
+    }],
+  });
+}
+
 // ─── Health check ─────────────────────────────────────────────────────────────
 export async function checkHealth() {
   try {

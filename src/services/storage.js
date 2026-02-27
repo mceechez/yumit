@@ -319,6 +319,54 @@ export function updateFavouriteRecipe(id, updates) {
   return saveState(state);
 }
 
+// ─── Meal Ratings Cache ────────────────────────────────────────────────────────
+// Stored independently so it never gets wiped by data reset.
+
+export function getMealRatings() {
+  try {
+    const raw = localStorage.getItem('yumit_meal_ratings');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveMealRatings(ratings) {
+  try {
+    localStorage.setItem('yumit_meal_ratings', JSON.stringify({
+      ratings,
+      savedAt: new Date().toISOString(),
+    }));
+  } catch { /* quota exceeded — silently skip */ }
+}
+
+// ─── Saved Shopping Lists ──────────────────────────────────────────────────────
+
+export function getSavedShoppingLists() {
+  try {
+    const raw = localStorage.getItem('yumit_shopping_lists');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveShoppingList(list) {
+  try {
+    const lists = getSavedShoppingLists();
+    const newList = {
+      id: crypto.randomUUID(),
+      date: new Date().toISOString().split('T')[0],
+      ...list,
+    };
+    lists.unshift(newList);
+    localStorage.setItem('yumit_shopping_lists', JSON.stringify(lists.slice(0, 20)));
+    return newList;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Reset ────────────────────────────────────────────────────────────────────
 
 export function resetToDefaults() {
