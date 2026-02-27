@@ -15,6 +15,7 @@ import {
 } from '../services/claude';
 import { translateCode } from '../data/productDictionary';
 import { formatPrice } from '../utils/formatters';
+import { getGrade } from '../services/nutrition';
 import { getProductDictionary, addProductTranslation, addShoppingTrip, saveFavouriteRecipe, addMeal } from '../services/storage';
 import { getProfile, ALLERGENS } from '../services/profile';
 import RecipeDetailPage from './RecipeDetailPage';
@@ -307,11 +308,15 @@ export function ScanPage() {
   };
 
   const handleSaveTrip = () => {
+    const score = nutritionAnalysis
+      ? (nutritionAnalysis.total_score ?? nutritionAnalysis.score ?? 0)
+      : 0;
     const trip = addShoppingTrip({
       items: parsedReceipt.items,
       total: parsedReceipt.total,
-      nutritionScore: nutritionAnalysis?.score || 0,
-      nutritionGrade: nutritionAnalysis?.grade || 'D',
+      nutritionScore: score,
+      nutritionGrade: getGrade(score),
+      pillars: nutritionAnalysis?.pillars || null,
       batchMeals: batchCooking?.recipes?.map(r => r.name) || [],
       store: parsedReceipt.store || 'Aldi Chingford',
     });
@@ -604,82 +609,90 @@ export function ScanPage() {
       {step === 'analyzed' && (
         <div className="space-y-4">
           {/* Nutrition Score */}
-          {nutritionAnalysis && (
-            <Card>
-              <CardTitle>Nutrition Score</CardTitle>
-              <div className="mt-3 flex items-center gap-4">
-                <GradeBadge grade={nutritionAnalysis.grade} size="xl" />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all ${
-                          nutritionAnalysis.score >= 80 ? 'bg-green-500' :
-                          nutritionAnalysis.score >= 60 ? 'bg-blue-500' :
-                          nutritionAnalysis.score >= 40 ? 'bg-yellow-500' : 'bg-red-500'
-                        }`}
-                        style={{ width: `${nutritionAnalysis.score}%` }}
-                      />
+          {nutritionAnalysis && (() => {
+            const totalScore = nutritionAnalysis.total_score ?? nutritionAnalysis.score ?? 0;
+            const grade = getGrade(totalScore);
+            const PILLAR_LABELS = {
+              protein: 'Protein',
+              veg_variety: 'Fruit & Veg Variety',
+              fibre: 'Fibre & Wholegrains',
+              processed_load: 'Processed Food Load',
+              gap_nutrients: 'Nutrient Gap Coverage',
+            };
+            const pillarColor = (s) => s >= 16 ? '#4CAF50' : s >= 10 ? '#FF9F0A' : '#FF453A';
+            const totalBarColor = totalScore >= 80 ? '#4CAF50' : totalScore >= 60 ? '#3b82f6' : totalScore >= 40 ? '#FF9F0A' : '#FF453A';
+            return (
+              <>
+                <Card>
+                  <CardTitle>Nutrition Score</CardTitle>
+                  <div className="mt-3 flex items-center gap-4">
+                    <GradeBadge grade={grade} size="xl" />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full transition-all"
+                            style={{ width: `${totalScore}%`, backgroundColor: totalBarColor }}
+                          />
+                        </div>
+                        <span className="text-lg font-bold">{totalScore}</span>
+                      </div>
+                      <p className="text-sm text-gray-500 mt-1">{nutritionAnalysis.summary}</p>
                     </div>
-                    <span className="text-lg font-bold">{nutritionAnalysis.score}</span>
                   </div>
-                  <p className="text-sm text-gray-500 mt-1">{nutritionAnalysis.summary}</p>
-                </div>
-              </div>
 
-              {/* Positives */}
-              {nutritionAnalysis.positives?.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-sm font-medium text-green-700 mb-2">Positives</p>
-                  <div className="space-y-1">
-                    {nutritionAnalysis.positives.map((pos, i) => (
-                      <p key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                        <span className="text-green-500">✓</span> {pos}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  {/* Pillar breakdown — only shown for new scans with pillar data */}
+                  {nutritionAnalysis.pillars && (
+                    <div className="mt-4 space-y-3">
+                      {Object.entries(nutritionAnalysis.pillars).map(([key, pillar]) => (
+                        <div key={key}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium text-gray-700">{PILLAR_LABELS[key] || key}</span>
+                            <span className="text-xs font-semibold text-gray-900">{pillar.score}/20</span>
+                          </div>
+                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all"
+                              style={{
+                                width: `${(pillar.score / 20) * 100}%`,
+                                backgroundColor: pillarColor(pillar.score),
+                              }}
+                            />
+                          </div>
+                          {pillar.reason && (
+                            <p className="text-xs text-gray-500 mt-0.5">{pillar.reason}</p>
+                          )}
+                        </div>
+                      ))}
+                      {/* TODO: Week-on-week pillar comparison */}
+                      {/* Build when 3+ scans with pillar data exist in localStorage */}
+                      {/* Requires: previous scan to have pillars object present */}
+                    </div>
+                  )}
 
-              {/* Flags */}
-              {nutritionAnalysis.flags?.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-sm font-medium text-yellow-700 mb-2">Areas to Watch</p>
-                  <div className="space-y-1">
-                    {nutritionAnalysis.flags.map((flag, i) => (
-                      <p key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                        <span className="text-yellow-500">!</span> {flag}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  {/* What the science says — collapsible, only when insights present */}
+                  {nutritionAnalysis.insights?.length > 0 && (
+                    <ScienceInsights insights={nutritionAnalysis.insights} />
+                  )}
+                </Card>
 
-              {/* Gaps */}
-              {nutritionAnalysis.gaps?.length > 0 && (
-                <div className="mt-4">
-                  <p className="text-sm font-medium text-red-700 mb-2">Missing Food Groups</p>
-                  <div className="flex flex-wrap gap-2">
-                    {nutritionAnalysis.gaps.map((gap, i) => (
-                      <Badge key={i} variant="danger">{gap}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
+                {/* One Thing Worth Adding — powered by lowest_pillar_suggestion */}
+                {nutritionAnalysis.lowest_pillar_suggestion && (
+                  <Card className="bg-basket-green-50 border-basket-green-100">
+                    <CardTitle>One Thing Worth Adding</CardTitle>
+                    <p className="text-sm text-gray-700 mt-1">{nutritionAnalysis.lowest_pillar_suggestion}</p>
+                  </Card>
+                )}
 
-              {/* What the science says — collapsible, only when insights present */}
-              {nutritionAnalysis.insights?.length > 0 && (
-                <ScienceInsights insights={nutritionAnalysis.insights} />
-              )}
-            </Card>
-          )}
-
-          {/* Good for the kids — separate card, only when kidsInsights present */}
-          {nutritionAnalysis?.kidsInsights?.length > 0 && (
-            <Card className="bg-orange-50 border-orange-100">
-              <KidsInsights insights={nutritionAnalysis.kidsInsights} />
-            </Card>
-          )}
+                {/* Good for the kids — separate card, only when kidsInsights present */}
+                {nutritionAnalysis.kidsInsights?.length > 0 && (
+                  <Card className="bg-orange-50 border-orange-100">
+                    <KidsInsights insights={nutritionAnalysis.kidsInsights} />
+                  </Card>
+                )}
+              </>
+            );
+          })()}
 
           {/* Batch Cooking */}
           {batchCooking?.recipes && (

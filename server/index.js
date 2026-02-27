@@ -274,59 +274,94 @@ const NUTRITION_RESEARCH_SYSTEM =
 function buildNutritionResearchPrompt(items, hasChildren) {
   const itemList = items.map(i => `- ${i.name} (£${i.price})`).join('\n');
   const kidsInstruction = hasChildren
-    ? '\nFor each key food, also look up any specific NHS or BNF guidance on benefits or risks for children and young people.\n'
+    ? '\nFor the research step, also look up any specific NHS or BNF guidance on benefits or risks for children and young people.\n'
     : '';
 
-  return `You are an evidence-based nutrition analyst. You have web search available — use it to look up current guidance from NHS, British Nutrition Foundation, Harvard T.H. Chan School of Public Health, Food Standards Agency, and PubMed.
+  return `You are an evidence-based nutrition analyst. You have web search available.
 
-Shopping basket items:
+HOUSEHOLD CONTEXT: See system prompt for members, life stages, and dietary needs.
+
+RECEIPT ITEMS:
 ${itemList}
 ${kidsInstruction}
-Step 1 — IDENTIFY the 5-6 most nutritionally significant foods (both positive and negative). Ignore non-food items.
+═══ STEP 1 — SCORE (receipt evidence only) ═══
+Score each pillar using ONLY the items listed above. Do not infer items not present.
+Be consistent — the same receipt must always produce the same pillar scores.
 
-Step 2 — RESEARCH each key food using web search. Search sources in this priority order:
-  1. nhs.uk/live-well/eat-well
-  2. nutrition.org.uk (British Nutrition Foundation)
-  3. hsph.harvard.edu/nutritionsource
-  4. food.gov.uk (Food Standards Agency)
-  5. pubmed.ncbi.nlm.nih.gov (for specific claims)
-Only use these sources. Ignore wellness blogs, supplement company websites, social media influencers, and any site that sells food products.
+PILLAR 1 — PROTEIN COVERAGE (max 20 points)
+Distinct protein sources: meat, fish, eggs, legumes (beans/lentils/chickpeas), dairy, tofu.
+- 2 or more distinct protein sources: 20
+- 1 protein source only: 12
+- No clear protein source identifiable: 4
 
-Step 3 — Return ONLY a JSON object with this exact structure:
+PILLAR 2 — FRUIT & VEGETABLE VARIETY (max 20 points)
+Count distinct fruit or vegetable items only.
+- 4 or more distinct items: 20
+- 2–3 distinct items: 13
+- 1 item: 7
+- None: 0
+
+PILLAR 3 — FIBRE & WHOLEGRAINS (max 20 points)
+- Wholegrain bread, oats, brown rice, lentils, beans or equivalent present: 20
+- Mixed — some whole foods alongside processed items: 12
+- Predominantly white carbs, refined products, or ready meals: 5
+
+PILLAR 4 — ULTRA-PROCESSED LOAD (max 20 points)
+This pillar scores inversely — fewer ultra-processed items = higher score.
+Ultra-processed: crisps, fizzy drinks, processed meats, ready meals, sugary cereals, packaged snacks.
+- Few or no ultra-processed items: 20
+- Some ultra-processed but balanced by whole foods: 13
+- Ultra-processed items represent a significant portion: 6
+- Ultra-processed items dominate: 0
+
+PILLAR 5 — NUTRITIONAL GAP COVERAGE (max 20 points)
+Key UK deficiency nutrients: iron, calcium, vitamin D, folate, omega-3.
+- 3 or more gap nutrients covered by identifiable items: 20
+- 1–2 gap nutrients covered: 12
+- None identifiable from the receipt: 4
+
+═══ STEP 2 — RESEARCH ═══
+Use web search to look up guidance on the 3–4 most nutritionally significant foods in this basket.
+Search in priority order: nhs.uk/live-well/eat-well, nutrition.org.uk, hsph.harvard.edu/nutritionsource, food.gov.uk, pubmed.ncbi.nlm.nih.gov.
+Ignore wellness blogs, supplement companies, social media, and sites that sell food products.
+
+═══ STEP 3 — RETURN JSON ═══
+Return ONLY this JSON object:
 {
-  "score": 72,
-  "grade": "B",
-  "positives": [
-    "Salmon is an excellent source of omega-3 fatty acids — NHS recommends eating at least 2 portions of fish per week, including 1 oily fish (nhs.uk)"
-  ],
-  "flags": [
-    "Baked beans are high in salt — NHS recommends adults have no more than 6g per day; a single can provides around 2.4g (nhs.uk)"
-  ],
-  "gaps": ["Leafy greens", "Whole grains"],
-  "summary": "1-2 sentence household-specific summary of this week's shop",
+  "pillars": {
+    "protein":        { "score": 0, "reason": "one sentence max" },
+    "veg_variety":    { "score": 0, "reason": "one sentence max" },
+    "fibre":          { "score": 0, "reason": "one sentence max" },
+    "processed_load": { "score": 0, "reason": "one sentence max" },
+    "gap_nutrients":  { "score": 0, "reason": "one sentence max" }
+  },
+  "total_score": 0,
+  "lowest_pillar": "pillar_key_name",
+  "lowest_pillar_suggestion": "One specific item under £2 that would most improve the lowest scoring pillar, with price estimate in GBP",
+  "summary": "1–2 sentence household-specific summary of this week's shop",
   "insights": [
     {
-      "heading": "Oily fish and heart health",
-      "body": "NHS guidance recommends eating at least 1 portion of oily fish per week. Oily fish such as salmon and mackerel are rich in long-chain omega-3 fatty acids, which evidence shows can reduce the risk of heart disease and support brain health.",
+      "heading": "Insight heading",
+      "body": "Evidence-based finding with source cited inline (nhs.uk)",
       "source": "NHS — nhs.uk/live-well/eat-well"
     }
   ],
   "kidsInsights": ${hasChildren ? `[
     {
-      "food": "Salmon",
-      "benefit": "Rich in DHA, an omega-3 fatty acid essential for brain development and eye health in children. NHS recommends 1-2 portions of fish per week for school-age children.",
+      "food": "Food name",
+      "benefit": "Child-specific benefit with source cited",
       "source": "NHS"
     }
   ]` : '[]'}
 }
 
-Scoring: 80-100 = A (excellent), 60-79 = B (good), 40-59 = C (needs improvement), below 40 = D (poor).
-
 Rules:
-- positives and flags MUST cite the source inline — do not give generic statements
-- insights: include exactly 3-4 items based on the most interesting research findings
-- kidsInsights: ${hasChildren ? 'include 2-3 items with specific child-relevant benefits from NHS/BNF' : 'return an empty array []'}
-- Tailor the score, summary and flags to the household described in the system prompt
+- total_score = sum of all 5 pillar scores (max 100)
+- lowest_pillar = key name of the lowest-scoring pillar
+- lowest_pillar_suggestion: name a real UK product available at the household's supermarket, under £2
+- insights: include exactly 3–4 items; cite source inline in the body field
+- kidsInsights: ${hasChildren ? 'include 2–3 items with child-relevant benefits from NHS/BNF' : 'return []'}
+- Tailor summary to the household described in the system prompt
 - Return ONLY the JSON object — no other text`;
 }
 
@@ -388,7 +423,7 @@ app.post('/api/nutrition-research', async (req, res) => {
 
     try {
       const parsed = parseJson(responseText);
-      console.log('[nutrition-research] score:', parsed.score, 'grade:', parsed.grade);
+      console.log('[nutrition-research] total_score:', parsed.total_score, 'lowest_pillar:', parsed.lowest_pillar);
       console.log('[nutrition-research] insights:', parsed.insights?.length ?? 0, 'kidsInsights:', parsed.kidsInsights?.length ?? 0);
       return res.json(parsed);
     } catch (err) {
