@@ -384,19 +384,29 @@ export function MealsPage() {
             <span className="text-4xl">🍽️</span>
             <p className="font-medium text-gray-800">No favourite meals saved yet.</p>
             <p className="text-sm text-gray-500 max-w-xs mx-auto">
-              Add your first meal manually, import from a recipe URL, or save one from your next batch cooking plan.
+              Generate a batch cook recipe from your last shop and save it here.
             </p>
             <div className="pt-1">
-              <Button size="sm">Add a Meal</Button>
+              <Button
+                size="sm"
+                onClick={handleGenerateNew}
+                loading={loading}
+                disabled={!lastShop || loading}
+              >
+                {lastShop ? 'Generate Recipes' : 'Scan a receipt to get started'}
+              </Button>
             </div>
           </div>
         </Card>
       )}
 
       {/* Household Favourites */}
-      {favourites.length > 0 && (
+      {/* Keep section mounted while any favourite card is still animating out */}
+      {(favourites.length > 0 || [...fadingOut].some(k => k.startsWith('favourites:'))) && (
         <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Household Favourites</h3>
+          {favourites.length > 0 && (
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Household Favourites</h3>
+          )}
           {favourites.map(recipe => renderFavouriteCard(recipe))}
         </section>
       )}
