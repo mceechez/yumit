@@ -428,6 +428,35 @@ export async function researchNutrition(items) {
   return data;
 }
 
+// ─── Parse a text receipt (PDF-extracted or pasted) ──────────────────────────
+// Sends raw text to /api/parse-text, which injects supermarket-specific rules
+// and returns a clean item array. Runs normalisation on the client side after.
+export async function parseTextReceipt(text, supermarket = 'generic') {
+  const profile = getProfile();
+  const res = await fetch('/api/parse-text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      supermarket,
+      systemPrompt: buildSystemPrompt(profile),
+    }),
+  });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('Unexpected response from receipt parser. Please try again.');
+  }
+  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+
+  // Server returned an error object (e.g. insufficient_items)
+  if (data.error) throw Object.assign(new Error(data.message || data.error), { code: data.error });
+
+  return data.items || [];
+}
+
 // ─── Search scrape-friendly sites for an alternative recipe URL ───────────────
 export async function findRecipeAlternatives(recipeName) {
   try {

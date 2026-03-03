@@ -12,8 +12,11 @@ import {
   researchNutrition,
   generateBatchCooking as batchCookingService,
   getSmartSwaps as swapsService,
+  parseTextReceipt,
 } from '../services/claude';
 import { translateCode } from '../data/productDictionary';
+import { normaliseItemName } from '../data/receiptNormaliser';
+import { detectSupermarket, SUPERMARKET_PROFILES } from '../data/supermarketProfiles';
 import { formatPrice } from '../utils/formatters';
 import { getGrade } from '../services/nutrition';
 import { getProductDictionary, addProductTranslation, addShoppingTrip, saveFavouriteRecipe, addMeal } from '../services/storage';
@@ -133,6 +136,23 @@ function KidsInsights({ insights }) {
   );
 }
 
+// ─── Specific error messages — never generic ──────────────────────────────────
+const EXTRACTION_ERRORS = {
+  image_quality:     'This photo is a bit dark or blurry. Lay the receipt flat, make sure all items are in frame, and try again in better light.',
+  insufficient_items:'We found a few items but not enough to be confident this is a full receipt. Try pasting your order confirmation text instead — copy everything from the page.',
+  pdf_protected:     'This PDF has a password or security setting that prevents reading. Try downloading it again from your supermarket account, or copy and paste the order text directly.',
+  pdf_image_only:    'This PDF contains a scanned image rather than readable text. Try taking a photo of your receipt with the camera option instead.',
+  no_grocery_items:  "This doesn't look like a grocery receipt — we couldn't find any food items. Make sure you're pasting from your order confirmation page, not your account overview.",
+};
+
+function calculateConfidence(items) {
+  const lowConfCount = items.filter(i => i.low_confidence).length;
+  if (items.length >= 10 && lowConfCount === 0) return 'high';
+  if (items.length >= 5 || (items.length > 0 && lowConfCount <= 3)) return 'medium';
+  if (items.length >= 1) return 'low';
+  return 'error';
+}
+
 export function ScanPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -171,6 +191,26 @@ export function ScanPage() {
   // Store files for later processing
   const [selectedFiles, setSelectedFiles] = useState([]);
 
+  // ─── Universal ingestion state ──────────────────────────────────────────────
+  const [inputMethod, setInputMethod] = useState('camera'); // 'camera' | 'pdf' | 'paste'
+  const [pasteText, setPasteText] = useState('');
+  const [extractionError, setExtractionError] = useState(null); // { code, message }
+  const [extractionConfidence, setExtractionConfidence] = useState(null);
+  const [detectedSupermarket, setDetectedSupermarket] = useState('generic');
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  // ─── Review step state ──────────────────────────────────────────────────────
+  const [reviewItems, setReviewItems] = useState([]);
+  const [editingItemIndex, setEditingItemIndex] = useState(null);
+  const [editingItemName, setEditingItemName] = useState('');
+  const [addItemName, setAddItemName] = useState('');
+  const [addItemPrice, setAddItemPrice] = useState('');
+  const [showAddReviewItem, setShowAddReviewItem] = useState(false);
+  const [pendingDictEntries, setPendingDictEntries] = useState([]);
+  const [showDictBanner, setShowDictBanner] = useState(false);
+
+  const pdfInputRef = useRef(null);
+
   const handleFileSelect = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -190,6 +230,147 @@ export function ScanPage() {
 
     // Reset file input so same files can be selected again
     e.target.value = '';
+  };
+
+  // ─── Normalise raw text items and route to review step ────────────────────
+  const processExtractedItems = (rawItems) => {
+    return rawItems.map(item => {
+      const { name: normName, low_confidence } = normaliseItemName(item.name || '');
+      return {
+        ...item,
+        translatedName: normName || item.name,
+        originalName: item.name,
+        name: normName || item.name,
+        low_confidence: item.low_confidence || low_confidence,
+        nonFood: item.nonFood || false,
+      };
+    });
+  };
+
+  const routeToReview = (items, confidence, supermarketId) => {
+    setReviewItems(items);
+    setExtractionConfidence(confidence);
+    setDetectedSupermarket(supermarketId || 'generic');
+    setExtractionError(null);
+    setEditingItemIndex(null);
+    setShowAddReviewItem(false);
+    setAllergenWarningDismissed(false);
+    setShowScanSuccess(true);
+    setTimeout(() => {
+      setShowScanSuccess(false);
+      setStep('reviewing');
+    }, 1000);
+  };
+
+  // ─── PDF upload handler ────────────────────────────────────────────────────
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setExtractionError(null);
+    setPdfLoading(true);
+    setProcessingStep('Reading your order...');
+    try {
+      // Dynamic import to avoid bundling the worker
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      const arrayBuffer = await file.arrayBuffer();
+      let pdf;
+      try {
+        pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      } catch (err) {
+        const code = err.message?.toLowerCase().includes('password') ? 'pdf_protected' : 'pdf_protected';
+        throw Object.assign(new Error(EXTRACTION_ERRORS[code]), { code });
+      }
+
+      const maxPages = Math.min(pdf.numPages, 20);
+      const pageTexts = [];
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        pageTexts.push(content.items.map(it => it.str).join(' '));
+      }
+      const fullText = pageTexts.join('\n---\n');
+
+      if (!fullText.trim()) {
+        throw Object.assign(new Error(EXTRACTION_ERRORS.pdf_image_only), { code: 'pdf_image_only' });
+      }
+
+      const supermarketId = detectSupermarket(fullText);
+      setProcessingStep('Identifying items...');
+      const rawItems = await parseTextReceipt(fullText, supermarketId);
+      const normItems = processExtractedItems(rawItems);
+      const total = normItems.reduce((s, i) => s + (Number(i.price) || 0), 0);
+      setParsedReceipt({ items: normItems, total, store: SUPERMARKET_PROFILES[supermarketId]?.name || '' });
+
+      const confidence = calculateConfidence(normItems);
+      routeToReview(normItems, confidence, supermarketId);
+    } catch (err) {
+      const code = err.code || 'insufficient_items';
+      setExtractionError({ code, message: EXTRACTION_ERRORS[code] || err.message });
+    } finally {
+      setPdfLoading(false);
+      setProcessingStep('');
+    }
+  };
+
+  // ─── Paste text handler ────────────────────────────────────────────────────
+  const handlePasteSubmit = async () => {
+    if (!pasteText.trim()) return;
+    setExtractionError(null);
+    setProcessingStep('Finding your items...');
+    try {
+      const supermarketId = detectSupermarket(pasteText);
+      const rawItems = await parseTextReceipt(pasteText, supermarketId);
+      const normItems = processExtractedItems(rawItems);
+      const total = normItems.reduce((s, i) => s + (Number(i.price) || 0), 0);
+      setParsedReceipt({ items: normItems, total, store: SUPERMARKET_PROFILES[supermarketId]?.name || '' });
+
+      const confidence = calculateConfidence(normItems);
+      routeToReview(normItems, confidence, supermarketId);
+    } catch (err) {
+      const code = err.code || 'no_grocery_items';
+      setExtractionError({ code, message: EXTRACTION_ERRORS[code] || err.message });
+    } finally {
+      setProcessingStep('');
+    }
+  };
+
+  // ─── Review step item editing ──────────────────────────────────────────────
+  const startEditReviewItem = (index) => {
+    setEditingItemIndex(index);
+    setEditingItemName(reviewItems[index].translatedName || reviewItems[index].name);
+  };
+  const confirmEditReviewItem = () => {
+    if (editingItemIndex === null) return;
+    const updated = reviewItems.map((item, i) => {
+      if (i !== editingItemIndex) return item;
+      const newName = editingItemName.trim() || item.translatedName;
+      // Track correction for dictionary learning
+      if (newName !== item.originalName) {
+        setPendingDictEntries(prev => [...prev, { raw: item.originalName, cleaned: newName }]);
+      }
+      return { ...item, translatedName: newName, name: newName, low_confidence: false };
+    });
+    setReviewItems(updated);
+    setEditingItemIndex(null);
+  };
+  const removeReviewItem = (index) => {
+    setReviewItems(prev => prev.filter((_, i) => i !== index));
+  };
+  const handleAddReviewItem = () => {
+    const name = addItemName.trim();
+    const price = parseFloat(addItemPrice) || 0;
+    if (!name) return;
+    const newItem = { name, translatedName: name, price, quantity: 1, nonFood: false, low_confidence: false, manuallyAdded: true };
+    setReviewItems(prev => [...prev, newItem]);
+    // Track manual addition for dictionary
+    setPendingDictEntries(prev => [...prev, { raw: name, cleaned: name }]);
+    setAddItemName('');
+    setAddItemPrice('');
+    setShowAddReviewItem(false);
   };
 
   const handleProcessImages = async () => {
@@ -230,11 +411,15 @@ export function ScanPage() {
       setParsedReceipt({ items: translatedItems, total, date, store });
       setProcessingStep('');
       setAllergenWarningDismissed(false);
-      // Brief success animation before showing results
+      // Route all camera receipts through the review step
+      const confidence = calculateConfidence(translatedItems);
+      setReviewItems(translatedItems);
+      setExtractionConfidence(confidence);
+      setDetectedSupermarket(store ? 'generic' : 'generic');
       setShowScanSuccess(true);
       setTimeout(() => {
         setShowScanSuccess(false);
-        setStep('parsed');
+        setStep('reviewing');
       }, 1400);
     } catch (err) {
       console.error('Failed to parse receipt:', err);
@@ -262,7 +447,22 @@ export function ScanPage() {
   const handleAnalyze = async () => {
     if (!parsedReceipt) return;
 
-    const allItems = parsedReceipt.items.map(i => ({
+    // Auto-save abbreviation expansions to dictionary
+    if (pendingDictEntries.length > 0) {
+      pendingDictEntries.forEach(({ raw, cleaned }) => {
+        if (raw && cleaned && raw !== cleaned) {
+          addProductTranslation(raw, cleaned);
+        }
+      });
+      setPendingDictEntries([]);
+    }
+
+    // Sync parsedReceipt with any review edits
+    const syncedItems = reviewItems.length > 0 ? reviewItems : (parsedReceipt.items || []);
+    const updatedReceipt = { ...parsedReceipt, items: syncedItems };
+    setParsedReceipt(updatedReceipt);
+
+    const allItems = syncedItems.map(i => ({
       name: i.translatedName || i.name,
       code: i.code,
       price: i.price,
@@ -284,6 +484,7 @@ export function ScanPage() {
 
       setStep('analyzed');
       setProcessingStep('');
+      if (pendingDictEntries.length > 0) setShowDictBanner(true);
     } catch (err) {
       console.error('Analysis failed:', err);
       setProcessingStep('');
@@ -353,6 +554,14 @@ export function ScanPage() {
     setNutritionAnalysis(null);
     setBatchCooking(null);
     setSmartSwaps(null);
+    setPasteText('');
+    setExtractionError(null);
+    setExtractionConfidence(null);
+    setReviewItems([]);
+    setEditingItemIndex(null);
+    setPendingDictEntries([]);
+    setShowDictBanner(false);
+    setShowAddReviewItem(false);
   };
 
   return (
@@ -387,127 +596,165 @@ export function ScanPage() {
 
       {/* Upload Step */}
       {step === 'upload' && (
-        <Card className="text-center py-8">
-          <div className="space-y-4">
-            <div className="w-16 h-16 bg-basket-green-100 rounded-full flex items-center justify-center mx-auto">
-              <svg className="w-8 h-8 text-basket-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900">Upload Receipt Photos</h3>
-              <p className="text-sm text-gray-500 mt-1">
-                Long receipt? Upload multiple photos - we&apos;ll combine them
-              </p>
-            </div>
-
-            {/* Image previews */}
-            {imagePreviews.length > 0 && (
-              <div className="flex flex-wrap gap-2 justify-center">
-                {imagePreviews.map((preview, index) => (
-                  <div key={index} className="relative">
-                    <img
-                      src={preview}
-                      alt={`Receipt ${index + 1}`}
-                      className="w-20 h-20 object-cover rounded-lg border-2 border-basket-green-200"
-                    />
-                    <button
-                      onClick={() => handleRemoveImage(index)}
-                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              capture="environment"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            <div className="flex gap-2 justify-center flex-wrap">
-              <Button
-                variant={imagePreviews.length > 0 ? 'outline' : 'primary'}
-                onClick={() => fileInputRef.current?.click()}
-                loading={loading}
-                disabled={loading}
-              >
-                {loading ? processingStep : imagePreviews.length > 0 ? '+ Add More' : 'Choose Photos'}
-              </Button>
-              {imagePreviews.length > 0 && !loading && (
-                <Button
-                  onClick={handleProcessImages}
-                  disabled={loading}
-                >
-                  Scan {imagePreviews.length} Photo{imagePreviews.length > 1 ? 's' : ''}
-                </Button>
-              )}
-            </div>
-            {imagePreviews.length > 0 && (
-              <p className="text-xs text-gray-400">
-                {imagePreviews.length} photo{imagePreviews.length > 1 ? 's' : ''} selected
-              </p>
-            )}
-
-            {/* Tips — shown when no images have been added yet */}
-            {imagePreviews.length === 0 && (
-              <div className="text-left bg-gray-200 rounded-xl p-4 space-y-2">
-                <p className="text-xs font-semibold text-gray-600">Tips for best results</p>
-                <ul className="space-y-1.5 text-xs text-gray-500">
-                  <li>Lay receipt flat on a dark surface</li>
-                  <li>Ensure all text is in frame</li>
-                  <li>Good lighting, no shadows across the text</li>
-                  <li>If receipt is long, use the + Add More option</li>
-                </ul>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* Parsed Step */}
-      {step === 'parsed' && parsedReceipt && (
         <div className="space-y-4">
-          {/* Image Previews */}
-          {imagePreviews.length > 0 && (
-            <Card padding="sm">
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {imagePreviews.map((preview, index) => (
-                  <img
-                    key={index}
-                    src={preview}
-                    alt={`Receipt ${index + 1}`}
-                    className="h-32 object-contain rounded-lg bg-gray-100 flex-shrink-0"
-                  />
-                ))}
+          {/* Input method tabs */}
+          <div className="flex rounded-xl overflow-hidden border border-gray-200 bg-gray-100">
+            {[
+              { id: 'camera', label: '📷 Camera', title: 'Camera' },
+              { id: 'pdf',    label: '📄 PDF',    title: 'PDF' },
+              { id: 'paste',  label: '📋 Paste',  title: 'Paste' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => { setInputMethod(tab.id); setExtractionError(null); }}
+                className={`flex-1 py-2.5 text-sm font-medium transition-colors ${inputMethod === tab.id ? 'bg-white text-basket-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Extraction error */}
+          {extractionError && (
+            <div className="bg-red-50 border border-red-100 rounded-xl p-4">
+              <p className="text-sm font-semibold text-red-700 mb-1">Couldn't read that</p>
+              <p className="text-sm text-red-600">{extractionError.message}</p>
+            </div>
+          )}
+
+          {/* Camera tab */}
+          {inputMethod === 'camera' && (
+            <Card className="text-center py-6">
+              <div className="space-y-4">
+                <div className="w-14 h-14 bg-basket-green-100 rounded-full flex items-center justify-center mx-auto">
+                  <svg className="w-7 h-7 text-basket-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">Photo your receipt</h3>
+                  <p className="text-sm text-gray-500 mt-1">Lay receipt flat and ensure all items are in frame</p>
+                </div>
+
+                {imagePreviews.length > 0 && (
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {imagePreviews.map((preview, index) => (
+                      <div key={index} className="relative">
+                        <img src={preview} alt={`Receipt ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border-2 border-basket-green-200" />
+                        <button onClick={() => handleRemoveImage(index)} className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <input ref={fileInputRef} type="file" accept="image/*" multiple capture="environment" onChange={handleFileSelect} className="hidden" />
+                <div className="flex gap-2 justify-center flex-wrap">
+                  <Button variant={imagePreviews.length > 0 ? 'outline' : 'primary'} onClick={() => fileInputRef.current?.click()} loading={loading} disabled={loading}>
+                    {loading ? processingStep : imagePreviews.length > 0 ? '+ Add More' : 'Choose Photos'}
+                  </Button>
+                  {imagePreviews.length > 0 && !loading && (
+                    <Button onClick={handleProcessImages} disabled={loading}>
+                      Scan {imagePreviews.length} Photo{imagePreviews.length > 1 ? 's' : ''}
+                    </Button>
+                  )}
+                </div>
+
+                {imagePreviews.length === 0 && (
+                  <div className="text-left bg-gray-200 rounded-xl p-4 space-y-1.5">
+                    <p className="text-xs font-semibold text-gray-600">Tips for best results</p>
+                    <ul className="space-y-1 text-xs text-gray-500">
+                      <li>Lay receipt flat on a dark surface</li>
+                      <li>Ensure all text is in frame</li>
+                      <li>Good lighting, no shadows across the text</li>
+                      <li>Long receipt? Use + Add More for multiple photos</li>
+                    </ul>
+                  </div>
+                )}
               </div>
-              <p className="text-xs text-gray-500 text-center mt-2">
-                {imagePreviews.length} image{imagePreviews.length > 1 ? 's' : ''} scanned
-              </p>
             </Card>
           )}
 
-          {/* Parsed Items */}
+          {/* PDF tab */}
+          {inputMethod === 'pdf' && (
+            <Card className="text-center py-6">
+              <div className="space-y-4">
+                <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
+                  <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">Upload order confirmation PDF</h3>
+                  <p className="text-sm text-gray-500 mt-1">Download from Ocado, Tesco, Sainsbury's, ASDA or Waitrose</p>
+                </div>
+                <input ref={pdfInputRef} type="file" accept=".pdf" onChange={handlePdfUpload} className="hidden" />
+                <Button onClick={() => pdfInputRef.current?.click()} loading={pdfLoading} disabled={pdfLoading} variant="primary">
+                  {pdfLoading ? 'Reading your order...' : 'Choose PDF'}
+                </Button>
+                <p className="text-xs text-gray-400">If your PDF is password-protected, try the Paste option instead.</p>
+              </div>
+            </Card>
+          )}
+
+          {/* Paste tab */}
+          {inputMethod === 'paste' && (
+            <Card className="py-4">
+              <div className="space-y-3">
+                <div>
+                  <h3 className="font-semibold text-gray-900">Paste your order confirmation</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">Copy everything from your browser or email — Yumit will find what it needs</p>
+                </div>
+                <textarea
+                  value={pasteText}
+                  onChange={e => setPasteText(e.target.value)}
+                  placeholder="Paste your order confirmation here — copy everything and Yumit will find what it needs."
+                  className="w-full h-40 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-800 placeholder:text-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-basket-green-400"
+                />
+                <Button
+                  onClick={handlePasteSubmit}
+                  loading={!!processingStep}
+                  disabled={!pasteText.trim() || !!processingStep}
+                  className="w-full"
+                >
+                  {processingStep || 'Find my items'}
+                </Button>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Review Step — shown after extraction for all input methods */}
+      {step === 'reviewing' && (
+        <div className="space-y-4">
+          {/* Confidence badge */}
+          {extractionConfidence === 'low' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="text-sm font-semibold text-amber-800">We could only read part of this receipt</p>
+              <p className="text-sm text-amber-700 mt-0.5">Check what we found below and add anything missing before scoring.</p>
+            </div>
+          )}
+
+          {/* Detected supermarket chip */}
+          {detectedSupermarket && detectedSupermarket !== 'generic' && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs bg-gray-100 text-gray-600 rounded-full px-3 py-1 border border-gray-200">
+                {SUPERMARKET_PROFILES[detectedSupermarket]?.name || detectedSupermarket}
+              </span>
+            </div>
+          )}
+
+          {/* Items list — editable */}
           <Card>
             <div className="flex items-center justify-between mb-3">
-              <CardTitle>Items Found ({parsedReceipt.items.length})</CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAddModal(true)}
-              >
+              <CardTitle>Items Found ({reviewItems.length})</CardTitle>
+              <Button variant="ghost" size="sm" onClick={() => setShowAddModal(true)}>
                 + Add Code
               </Button>
             </div>
 
-            {/* Allergen warning header — only shown when household has allergens */}
+            {/* Allergen warning */}
             {householdAllergens.length > 0 && !allergenWarningDismissed && (
               <div className="mb-3 bg-red-50 border border-red-100 rounded-xl p-3 animate-allergen-pulse">
                 <div className="flex items-start justify-between gap-2">
@@ -517,53 +764,65 @@ export function ScanPage() {
                       Checking against: {householdAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setAllergenWarningDismissed(true)}
-                    className="text-red-400 hover:text-red-600 flex-shrink-0 mt-0.5"
-                    aria-label="Dismiss allergen warning"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                  <button onClick={() => setAllergenWarningDismissed(true)} className="text-red-400 hover:text-red-600 flex-shrink-0 mt-0.5" aria-label="Dismiss allergen warning">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                 </div>
               </div>
             )}
 
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {parsedReceipt.items.map((item, index) => {
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {reviewItems.map((item, index) => {
                 const itemName = item.translatedName || item.name;
                 const allergenFlags = checkItemAllergens(itemName, householdAllergens);
                 const personNames = allergenFlags.length
                   ? [...new Set(allergenFlags.flatMap(f => allergenPersonMap[f.allergenValue] || []))]
                   : [];
                 const hasAllergen = allergenFlags.length > 0;
+                const isEditing = editingItemIndex === index;
                 return (
-                  <div
-                    key={index}
-                    className={`py-2 border-b border-gray-200 last:border-0 ${hasAllergen ? 'bg-red-50 -mx-1 px-1 rounded-xl border-red-100 animate-allergen-pulse' : ''}`}
-                  >
-                    <div className="flex items-start justify-between">
+                  <div key={index} className={`py-2 border-b border-gray-100 last:border-0 ${hasAllergen ? 'bg-red-50 -mx-1 px-1 rounded-xl' : ''}`}>
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {hasAllergen && <span className="text-base">⚠️</span>}
-                          <p className={`font-medium ${hasAllergen ? 'text-red-900' : 'text-gray-900'}`}>
-                            {itemName}
-                          </p>
-                          {item.nonFood && (
-                            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>
-                          )}
-                        </div>
-                        {item.translatedName !== item.originalCode && (
+                        {isEditing ? (
+                          <div className="flex gap-2">
+                            <input
+                              autoFocus
+                              value={editingItemName}
+                              onChange={e => setEditingItemName(e.target.value)}
+                              onBlur={confirmEditReviewItem}
+                              onKeyDown={e => { if (e.key === 'Enter') confirmEditReviewItem(); if (e.key === 'Escape') setEditingItemIndex(null); }}
+                              className="flex-1 text-sm border border-basket-green-400 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
+                            />
+                            <button onClick={confirmEditReviewItem} className="text-xs text-basket-green-600 font-medium px-2">Done</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {hasAllergen && <span className="text-base">⚠️</span>}
+                            <button
+                              onClick={() => startEditReviewItem(index)}
+                              className={`font-medium text-left hover:text-basket-green-700 transition-colors ${hasAllergen ? 'text-red-900' : 'text-gray-900'} ${item.low_confidence ? 'border-b border-amber-400' : ''}`}
+                            >
+                              {itemName}
+                            </button>
+                            {item.nonFood && <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>}
+                            {item.low_confidence && <span className="text-xs text-amber-500">?</span>}
+                          </div>
+                        )}
+                        {item.originalCode && item.translatedName !== item.originalCode && (
                           <p className="text-xs text-gray-400">{item.originalCode}</p>
+                        )}
+                        {item.low_confidence && item.originalName && item.originalName !== itemName && (
+                          <p className="text-xs text-amber-600 mt-0.5">Read as: {item.originalName}</p>
                         )}
                         <AllergenFlag flags={allergenFlags} personNames={personNames} />
                       </div>
-                      <div className="text-right ml-2 shrink-0">
-                        <p className="font-medium">{formatPrice(item.price)}</p>
-                        {item.quantity > 1 && (
-                          <p className="text-xs text-gray-400">x{item.quantity}</p>
-                        )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right">
+                          <p className="font-medium text-sm">{formatPrice(item.price)}</p>
+                          {item.quantity > 1 && <p className="text-xs text-gray-400">x{item.quantity}</p>}
+                        </div>
+                        <button onClick={() => removeReviewItem(index)} className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none" aria-label="Remove item">×</button>
                       </div>
                     </div>
                   </div>
@@ -571,14 +830,49 @@ export function ScanPage() {
               })}
             </div>
 
+            {/* Add item form */}
+            {showAddReviewItem ? (
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                <p className="text-xs font-medium text-gray-600">Add a missing item</p>
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    value={addItemName}
+                    onChange={e => setAddItemName(e.target.value)}
+                    placeholder="Item name"
+                    className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddReviewItem(); }}
+                  />
+                  <input
+                    value={addItemPrice}
+                    onChange={e => setAddItemPrice(e.target.value)}
+                    placeholder="£0.00"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="w-20 text-sm border border-gray-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleAddReviewItem} disabled={!addItemName.trim()}>Add</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setShowAddReviewItem(false)}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setShowAddReviewItem(true)} className="mt-3 pt-3 border-t border-gray-100 w-full text-sm text-basket-green-600 hover:text-basket-green-700 text-left font-medium">
+                + Add missing item
+              </button>
+            )}
+
+            {/* Total */}
             <div className="mt-4 pt-3 border-t border-gray-200 flex justify-between items-center">
               <span className="font-semibold">Total</span>
               <span className="text-xl font-bold text-basket-green-500">
-                {formatPrice(parsedReceipt.total)}
+                {formatPrice(reviewItems.reduce((s, i) => s + (Number(i.price) || 0), 0))}
               </span>
             </div>
 
-            {/* Allergen disclaimer — shown whenever allergens are in household profile */}
+            {/* Allergen disclaimer */}
             {householdAllergens.length > 0 && (
               <div className="mt-3 bg-amber-50 border border-amber-100 rounded-xl p-3">
                 <p className="text-xs text-amber-700 leading-relaxed">
@@ -591,17 +885,20 @@ export function ScanPage() {
           {/* Actions */}
           <div className="flex gap-3">
             <Button variant="outline" onClick={resetScan} className="flex-1">
-              Scan Again
+              Start over
             </Button>
             <Button
               onClick={handleAnalyze}
               loading={loading}
-              disabled={loading || !!processingStep}
+              disabled={loading || !!processingStep || reviewItems.filter(i => !i.nonFood).length < 3}
               className="flex-1"
             >
-              Analyze & Plan
+              {loading ? (processingStep || 'Analysing…') : 'Score this shop'}
             </Button>
           </div>
+          {reviewItems.filter(i => !i.nonFood).length < 3 && (
+            <p className="text-xs text-gray-400 text-center -mt-2">Add at least 3 food items to score this shop</p>
+          )}
         </div>
       )}
 
@@ -610,8 +907,11 @@ export function ScanPage() {
         <div className="space-y-4">
           {/* Nutrition Score */}
           {nutritionAnalysis && (() => {
-            const totalScore = nutritionAnalysis.total_score ?? nutritionAnalysis.score ?? 0;
-            const grade = getGrade(totalScore);
+            const pillarTotal = Object.values(nutritionAnalysis.pillars || {})
+              .reduce((sum, p) => sum + (p.score || 0), 0);
+            const synergyScore = nutritionAnalysis.synergy_score || 0;
+            const totalScore = nutritionAnalysis.total_score ?? pillarTotal;
+            const grade = getGrade(pillarTotal);
             const PILLAR_LABELS = {
               protein: 'Protein',
               veg_variety: 'Fruit & Veg Variety',
@@ -620,9 +920,19 @@ export function ScanPage() {
               gap_nutrients: 'Nutrient Gap Coverage',
             };
             const pillarColor = (s) => s >= 16 ? '#4CAF50' : s >= 10 ? '#FF9F0A' : '#FF453A';
-            const totalBarColor = totalScore >= 80 ? '#4CAF50' : totalScore >= 60 ? '#3b82f6' : totalScore >= 40 ? '#FF9F0A' : '#FF453A';
+            const barScore = Math.min(pillarTotal, 100);
+            const totalBarColor = pillarTotal >= 80 ? '#4CAF50' : pillarTotal >= 60 ? '#3b82f6' : pillarTotal >= 40 ? '#FF9F0A' : '#FF453A';
             return (
               <>
+                {/* Headline Insight — most interesting observation, above score card */}
+                {nutritionAnalysis.headline_insight && (
+                  <div className="px-1">
+                    <p className="text-base font-medium text-gray-900 leading-snug">
+                      {nutritionAnalysis.headline_insight}
+                    </p>
+                  </div>
+                )}
+
                 <Card>
                   <CardTitle>Nutrition Score</CardTitle>
                   <div className="mt-3 flex items-center gap-4">
@@ -632,10 +942,21 @@ export function ScanPage() {
                         <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
                           <div
                             className="h-full transition-all"
-                            style={{ width: `${totalScore}%`, backgroundColor: totalBarColor }}
+                            style={{ width: `${barScore}%`, backgroundColor: totalBarColor }}
                           />
                         </div>
-                        <span className="text-lg font-bold">{totalScore}</span>
+                        {synergyScore > 0 ? (
+                          <div className="flex flex-col items-end">
+                            <div className="flex items-center gap-1 text-xs text-gray-400 leading-none mb-0.5">
+                              <span>{pillarTotal}</span>
+                              <span>+</span>
+                              <span className="text-teal-500 font-semibold">{synergyScore}</span>
+                            </div>
+                            <span className="text-lg font-bold text-gray-900 leading-none">{totalScore}</span>
+                          </div>
+                        ) : (
+                          <span className="text-lg font-bold">{totalScore}</span>
+                        )}
                       </div>
                       <p className="text-sm text-gray-500 mt-1">{nutritionAnalysis.summary}</p>
                     </div>
@@ -664,9 +985,6 @@ export function ScanPage() {
                           )}
                         </div>
                       ))}
-                      {/* TODO: Week-on-week pillar comparison */}
-                      {/* Build when 3+ scans with pillar data exist in localStorage */}
-                      {/* Requires: previous scan to have pillars object present */}
                     </div>
                   )}
 
@@ -676,11 +994,33 @@ export function ScanPage() {
                   )}
                 </Card>
 
-                {/* One Thing Worth Adding — powered by lowest_pillar_suggestion */}
-                {nutritionAnalysis.lowest_pillar_suggestion && (
+                {/* Smart Combinations — synergy panel, only when synergies detected */}
+                {nutritionAnalysis.synergies_detected?.length > 0 && (
+                  <Card>
+                    <CardTitle>Your shop's smart combinations</CardTitle>
+                    <div className="mt-3 space-y-3">
+                      {nutritionAnalysis.synergies_detected.map((syn, i) => (
+                        <div key={i} className="border-l-2 border-teal-500 pl-3">
+                          <p className="text-xs text-gray-400 mb-0.5">🔗 {syn.pair}</p>
+                          <p className="text-sm text-gray-800">{syn.insight}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {synergyScore > 0 && (
+                      <p className="text-xs text-gray-400 mt-3 text-right">
+                        {pillarTotal} + {synergyScore} synergy bonus = {totalScore}
+                      </p>
+                    )}
+                  </Card>
+                )}
+
+                {/* One Thing Worth Adding */}
+                {(nutritionAnalysis.one_addition || nutritionAnalysis.lowest_pillar_suggestion) && (
                   <Card className="bg-basket-green-50 border-basket-green-100">
                     <CardTitle>One Thing Worth Adding</CardTitle>
-                    <p className="text-sm text-gray-700 mt-1">{nutritionAnalysis.lowest_pillar_suggestion}</p>
+                    <p className="text-sm text-gray-700 mt-1">
+                      {nutritionAnalysis.one_addition || nutritionAnalysis.lowest_pillar_suggestion}
+                    </p>
                   </Card>
                 )}
 
@@ -754,6 +1094,20 @@ export function ScanPage() {
                 ))}
               </div>
             </Card>
+          )}
+
+          {/* Dictionary learning banner */}
+          {showDictBanner && pendingDictEntries.length > 0 && (
+            <div className="bg-basket-green-50 border border-basket-green-100 rounded-xl p-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-basket-green-800">Save these item names for future scans?</p>
+                <p className="text-xs text-basket-green-600 mt-0.5">{pendingDictEntries.length} item{pendingDictEntries.length > 1 ? 's' : ''} added or corrected this scan</p>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <button onClick={() => { pendingDictEntries.forEach(({ raw, cleaned }) => addProductTranslation(raw, cleaned)); setPendingDictEntries([]); setShowDictBanner(false); }} className="text-xs font-medium text-basket-green-700 hover:text-basket-green-900">Save</button>
+                <button onClick={() => setShowDictBanner(false)} className="text-xs text-gray-400 hover:text-gray-600">Dismiss</button>
+              </div>
+            </div>
           )}
 
           {/* Save Trip */}

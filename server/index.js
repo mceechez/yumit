@@ -277,14 +277,29 @@ function buildNutritionResearchPrompt(items, hasChildren) {
     ? '\nFor the research step, also look up any specific NHS or BNF guidance on benefits or risks for children and young people.\n'
     : '';
 
-  return `You are an evidence-based nutrition analyst. You have web search available.
+  return `You are Yumit's nutrition intelligence engine. Your role is to find and explain the nutritional value already present in this household's weekly shop.
+
+PHILOSOPHY:
+- You identify what is working and what combinations are creating extra value
+- You never mention what is absent, missing, or suboptimal unless generating the one_addition field
+- You never reference ultra-processed items, poor choices, or nutritional failures
+- You speak like a knowledgeable friend who understands food science — warm, specific, never clinical
+- You cite the actual items from the basket, never speak in generalities
+- Every insight connects the science to something a person actually experiences: energy, sleep, immunity, digestion, focus, joint health
+
+LANGUAGE RULES — ABSOLUTE:
+NEVER use these words: deficiency, lacking, missing, insufficient, poor, warning, risk, suboptimal, should, must, need to, at risk
+ALWAYS use: specific item names from the basket, plain English for any scientific term, human outcomes (energy / sleep / immunity / digestion), active present tense ("your spinach and lemon are working together")
+SENTENCE STRUCTURE for every insight: [what is in the basket] + [what it does] + [why it matters to a human]
+LENGTH: each insight is 1–2 sentences maximum. No paragraphs. No lists within insights.
+TONE: read each output aloud — if it sounds like a doctor or a report, rewrite it; if it sounds like a knowledgeable friend explaining something interesting over dinner, it is correct.
 
 HOUSEHOLD CONTEXT: See system prompt for members, life stages, and dietary needs.
 
 RECEIPT ITEMS:
 ${itemList}
 ${kidsInstruction}
-═══ STEP 1 — SCORE (receipt evidence only) ═══
+═══ STEP 1 — SCORE PILLARS (receipt evidence only) ═══
 Score each pillar using ONLY the items listed above. Do not infer items not present.
 Be consistent — the same receipt must always produce the same pillar scores.
 
@@ -315,53 +330,79 @@ Ultra-processed: crisps, fizzy drinks, processed meats, ready meals, sugary cere
 - Ultra-processed items dominate: 0
 
 PILLAR 5 — NUTRITIONAL GAP COVERAGE (max 20 points)
-Key UK deficiency nutrients: iron, calcium, vitamin D, folate, omega-3.
-- 3 or more gap nutrients covered by identifiable items: 20
-- 1–2 gap nutrients covered: 12
+Key UK priority nutrients: iron, calcium, vitamin D, folate, omega-3.
+- 3 or more of these covered by identifiable items: 20
+- 1–2 covered: 12
 - None identifiable from the receipt: 4
 
-═══ STEP 2 — RESEARCH ═══
+═══ STEP 2 — DETECT SYNERGIES ═══
+Scan the basket for these specific pairings. For each detected synergy: generate one insight sentence following the language rules above, referencing the specific items from this basket.
+
+1. IRON + VITAMIN C (score +3): iron sources (red meat, spinach, lentils, kidney beans, fortified cereals) + vitamin C sources (citrus, peppers, tomatoes, broccoli, strawberries)
+2. VITAMIN D + CALCIUM (score +3): vitamin D sources (oily fish, eggs, fortified milk) + calcium sources (dairy, fortified plant milk, leafy greens, tinned fish with bones)
+3. FAT-SOLUBLE VITAMINS + HEALTHY FATS (score +2): fat-soluble vitamin sources (dark leafy greens, carrots, sweet potato, squash) + healthy fat sources (olive oil, avocado, nuts, seeds)
+4. PROBIOTICS + PREBIOTIC FIBRE (score +2): probiotic sources (live yoghurt, kefir, sauerkraut, kimchi) + prebiotic fibre sources (oats, garlic, onions, leeks, asparagus, bananas)
+5. OMEGA-3 + ANTIOXIDANT VEGETABLES (score +2): omega-3 sources (oily fish, walnuts, flaxseed) + antioxidant-rich vegetables (broccoli, spinach, peppers, tomatoes)
+6. ZINC + PROTEIN DIVERSITY (score +1): zinc sources in context of 2 or more distinct protein sources
+7. LYCOPENE ACTIVATION (score +1): tinned tomatoes, tomato paste, or cooked tomato products present — this is a solo synergy, no pairing required; note that the cooked/tinned form makes lycopene more bioavailable
+8. MAGNESIUM + VITAMIN B6 (score +1): magnesium sources (oats, nuts, dark chocolate, seeds, legumes) + B6 sources (eggs, poultry, bananas, potatoes)
+
+Only add an entry to synergies_detected if the pair is genuinely present. Return an empty array if no synergies are found — never fabricate pairings.
+
+═══ STEP 3 — RESEARCH ═══
 Use web search to look up guidance on the 3–4 most nutritionally significant foods in this basket.
 Search in priority order: nhs.uk/live-well/eat-well, nutrition.org.uk, hsph.harvard.edu/nutritionsource, food.gov.uk, pubmed.ncbi.nlm.nih.gov.
-Ignore wellness blogs, supplement companies, social media, and sites that sell food products.
-
-═══ STEP 3 — RETURN JSON ═══
-Return ONLY this JSON object:
+Ignore wellness blogs, supplement companies, social media, and sites that sell food products.${kidsInstruction}
+═══ STEP 4 — RETURN JSON ═══
+Return ONLY this JSON object — no preamble, no markdown, no explanation outside it:
 {
   "pillars": {
-    "protein":        { "score": 0, "reason": "one sentence max" },
-    "veg_variety":    { "score": 0, "reason": "one sentence max" },
-    "fibre":          { "score": 0, "reason": "one sentence max" },
-    "processed_load": { "score": 0, "reason": "one sentence max" },
-    "gap_nutrients":  { "score": 0, "reason": "one sentence max" }
+    "protein":        { "score": 0, "reason": "one sentence, language rules apply" },
+    "veg_variety":    { "score": 0, "reason": "one sentence, language rules apply" },
+    "fibre":          { "score": 0, "reason": "one sentence, language rules apply" },
+    "processed_load": { "score": 0, "reason": "one sentence, language rules apply" },
+    "gap_nutrients":  { "score": 0, "reason": "one sentence, language rules apply" }
   },
+  "synergies_detected": [
+    {
+      "pair": "synergy pair name",
+      "items_from_basket": ["item 1", "item 2"],
+      "insight": "one to two sentences following all language rules",
+      "score_contribution": 0
+    }
+  ],
+  "synergy_score": 0,
   "total_score": 0,
+  "headline_insight": "single most impressive or surprising thing about this shop — one sentence, language rules apply",
   "lowest_pillar": "pillar_key_name",
-  "lowest_pillar_suggestion": "One specific item under £2 that would most improve the lowest scoring pillar, with price estimate in GBP",
+  "one_addition": "single specific affordable item under £2 that would add the most nutritional value this week — phrased as a suggestion not an instruction",
+  "lowest_pillar_suggestion": "same value as one_addition",
   "summary": "1–2 sentence household-specific summary of this week's shop",
   "insights": [
     {
       "heading": "Insight heading",
-      "body": "Evidence-based finding with source cited inline (nhs.uk)",
+      "body": "Evidence-based finding with source cited inline (nhs.uk), language rules apply",
       "source": "NHS — nhs.uk/live-well/eat-well"
     }
   ],
   "kidsInsights": ${hasChildren ? `[
     {
       "food": "Food name",
-      "benefit": "Child-specific benefit with source cited",
+      "benefit": "Child-specific benefit with source cited, language rules apply",
       "source": "NHS"
     }
   ]` : '[]'}
 }
 
 Rules:
-- total_score = sum of all 5 pillar scores (max 100)
+- total_score = sum of all 5 pillar scores + synergy_score
+- synergy_score = sum of score_contribution values in synergies_detected (0 if array is empty)
 - lowest_pillar = key name of the lowest-scoring pillar
-- lowest_pillar_suggestion: name a real UK product available at the household's supermarket, under £2
-- insights: include exactly 3–4 items; cite source inline in the body field
-- kidsInsights: ${hasChildren ? 'include 2–3 items with child-relevant benefits from NHS/BNF' : 'return []'}
-- Tailor summary to the household described in the system prompt
+- one_addition and lowest_pillar_suggestion must be identical: a real UK product at the household's supermarket, under £2
+- headline_insight: the single most specific and interesting observation about this shop — not a score summary
+- insights: include exactly 3–4 items; cite source inline in the body field; language rules apply
+- kidsInsights: ${hasChildren ? 'include 2–3 items with child-relevant benefits from NHS/BNF; language rules apply' : 'return []'}
+- Tailor summary and insights to the household described in the system prompt
 - Return ONLY the JSON object — no other text`;
 }
 
@@ -423,9 +464,115 @@ app.post('/api/nutrition-research', async (req, res) => {
 
     try {
       const parsed = parseJson(responseText);
-      console.log('[nutrition-research] total_score:', parsed.total_score, 'lowest_pillar:', parsed.lowest_pillar);
-      console.log('[nutrition-research] insights:', parsed.insights?.length ?? 0, 'kidsInsights:', parsed.kidsInsights?.length ?? 0);
+      console.log('[nutrition-research] total_score:', parsed.total_score, 'synergy_score:', parsed.synergy_score ?? 0, 'lowest_pillar:', parsed.lowest_pillar);
+      console.log('[nutrition-research] synergies:', parsed.synergies_detected?.length ?? 0, 'insights:', parsed.insights?.length ?? 0, 'kidsInsights:', parsed.kidsInsights?.length ?? 0);
       return res.json(parsed);
+    } catch (err) {
+      return res.status(502).json({ error: err.message });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── /api/parse-text — universal text receipt parser (PDF + paste) ────────────
+// Accepts raw text extracted from a PDF or pasted from a browser.
+// Injects supermarket-specific rules and returns a clean item array.
+
+const SUPERMARKET_PROFILES_SERVER = {
+  ocado:      { name: 'Ocado',             stripRules: ['delivery charges', 'bag charges', 'promotional code lines'],                                          notes: 'Full unabbreviated product names. Use line item price. Substitutions are labelled.',                                                                   substitutionLabel: 'substitution' },
+  tesco:      { name: 'Tesco Online',      stripRules: ['Clubcard Price lines', "'You saved' lines", 'promotional banner text', 'delivery slot info'],          notes: 'Some abbreviations used. Use the final paid/Clubcard price. Weight-based items: use the line total.',                                                    substitutionLabel: null },
+  sainsburys: { name: "Sainsbury's Online",stripRules: ['Nectar points lines', 'delivery information lines'],                                                  notes: "Clean layout. When 'substituted for' appears, extract the replacement item delivered, not the original.",                                               substitutionLabel: 'substituted for' },
+  asda:       { name: 'ASDA Online',       stripRules: ['Rollback pricing lines (e.g. "Rollback was £X")', 'George clothing lines', 'promotional header lines'],notes: 'More abbreviations than others (e.g. "ASDA Chckn Bst Flts"). Use final paid price, not Rollback price.',                                             substitutionLabel: null },
+  waitrose:   { name: 'Waitrose Online',   stripRules: ['myWaitrose points lines', 'Essential Waitrose tier label prefix lines', 'delivery info'],              notes: 'Full product names, no abbreviations. Strip myWaitrose loyalty lines.',                                                                                  substitutionLabel: 'substitution' },
+  generic:    { name: 'Online Supermarket',stripRules: ['loyalty points lines', 'delivery charges', 'promotional banner text'],                                 notes: 'Generic mode — extract grocery food and drink items only.',                                                                                              substitutionLabel: null },
+};
+
+function buildParseTextPrompt(text, supermarketId) {
+  const profile = SUPERMARKET_PROFILES_SERVER[supermarketId] || SUPERMARKET_PROFILES_SERVER.generic;
+  const supermarketSection = `SUPERMARKET: ${profile.name}
+STRIP these lines entirely: ${profile.stripRules.join('; ')}
+PARSING NOTES: ${profile.notes}${profile.substitutionLabel ? `\nSUBSTITUTION LABEL: When you see "${profile.substitutionLabel}", extract the replacement item actually delivered, not the original.` : ''}`;
+
+  return `You are extracting grocery items from an online supermarket order confirmation.
+
+${supermarketSection}
+
+From the text below, extract every purchased grocery item.
+For each item return:
+- name: full readable product name (cleaned, no promotional text, no loyalty point references)
+- quantity: number of units (default 1 if not shown)
+- price: price paid in GBP as a number (use the final paid price, not original if discounted)
+- substituted: true if this item replaced an originally ordered item, false otherwise
+
+Return as JSON array only. No preamble, no explanation, no markdown.
+[{"name":"...","quantity":1,"price":0.00,"substituted":false}]
+
+Universal rules applying to ALL supermarkets:
+- EXTRACT: grocery food and drink items only
+- IGNORE: delivery charges, bag charges, tips, loyalty points lines, promotional banner text, subtotal lines, VAT lines, total lines, payment method lines, order number lines, delivery address lines, date and time lines
+- IGNORE: non-grocery items (magazines, flowers, clothing, household goods clearly not food)
+- CLEAN names: remove store own-brand tier labels when they appear as prefixes on their own (strip standalone 'Essential' or 'Finest' prefix lines, but keep them when part of product name)
+- SUBSTITUTIONS: when an item shows as substituted, extract the replacement item that was actually delivered
+- CONFIDENCE: if you cannot confidently identify at least 3 grocery items, return: {"error":"insufficient_items","message":"Not enough grocery items found. Please check the pasted content includes your full order."}
+- If no grocery items exist at all, return: {"error":"no_grocery_items","message":"This doesn't look like a grocery receipt — we couldn't find any food items. Make sure you're pasting from your order confirmation page, not your account overview."}
+
+ORDER TEXT:
+${text.slice(0, 12000)}`; // cap at ~12k chars to stay within token budget
+}
+
+app.post('/api/parse-text', async (req, res) => {
+  const { text, supermarket = 'generic', systemPrompt } = req.body;
+  if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+
+  let apiKey;
+  try { apiKey = getApiKey(); } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
+  try {
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        system: systemPrompt || 'You are a grocery receipt parser for UK supermarkets. Location: UK. Currency: GBP (£).',
+        messages: [{ role: 'user', content: buildParseTextPrompt(text, supermarket) }],
+      }),
+    });
+
+    let claudeData;
+    try {
+      claudeData = await upstream.json();
+    } catch {
+      return res.status(502).json({ error: 'Received an unexpected response. Please try again.' });
+    }
+
+    if (!upstream.ok) {
+      const apiError = claudeData?.error?.message ||
+        (typeof claudeData?.error === 'string' ? claudeData.error : null) ||
+        `Claude API error (${upstream.status})`;
+      return res.status(upstream.status).json({ error: apiError });
+    }
+
+    const responseText = claudeData?.content?.[0]?.text;
+    if (!responseText) {
+      return res.status(502).json({ error: 'Claude returned an empty response. Please try again.' });
+    }
+
+    try {
+      const parsed = parseJson(responseText);
+      // Claude returned an error object
+      if (parsed.error) return res.json(parsed);
+      // Claude returned an array directly
+      const items = Array.isArray(parsed) ? parsed : (parsed.items || []);
+      console.log('[parse-text] supermarket:', supermarket, 'items:', items.length);
+      return res.json({ items });
     } catch (err) {
       return res.status(502).json({ error: err.message });
     }
