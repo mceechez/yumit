@@ -19,7 +19,7 @@ import { normaliseItemName } from '../data/receiptNormaliser';
 import { detectSupermarket, SUPERMARKET_PROFILES } from '../data/supermarketProfiles';
 import { formatPrice } from '../utils/formatters';
 import { getGrade } from '../services/nutrition';
-import { getProductDictionary, addProductTranslation, addShoppingTrip, saveFavouriteRecipe, addMeal } from '../services/storage';
+import { getProductDictionary, addProductTranslation, addShoppingTrip, saveFavouriteRecipe, addMeal, logExtractionNoise } from '../services/storage';
 import { getProfile, ALLERGENS } from '../services/profile';
 import RecipeDetailPage from './RecipeDetailPage';
 
@@ -208,6 +208,7 @@ export function ScanPage() {
   const [showAddReviewItem, setShowAddReviewItem] = useState(false);
   const [pendingDictEntries, setPendingDictEntries] = useState([]);
   const [showDictBanner, setShowDictBanner] = useState(false);
+  const [confirmingRemoveIndex, setConfirmingRemoveIndex] = useState(null);
 
   const pdfInputRef = useRef(null);
 
@@ -345,20 +346,29 @@ export function ScanPage() {
   };
   const confirmEditReviewItem = () => {
     if (editingItemIndex === null) return;
-    const updated = reviewItems.map((item, i) => {
-      if (i !== editingItemIndex) return item;
-      const newName = editingItemName.trim() || item.translatedName;
-      // Track correction for dictionary learning
-      if (newName !== item.originalName) {
-        setPendingDictEntries(prev => [...prev, { raw: item.originalName, cleaned: newName }]);
-      }
-      return { ...item, translatedName: newName, name: newName, low_confidence: false };
-    });
+    const item = reviewItems[editingItemIndex];
+    const newName = editingItemName.trim() || item.translatedName;
+    if (newName !== (item.translatedName || item.name)) {
+      addProductTranslation(item.originalName || item.originalCode || item.name, newName);
+    }
+    const updated = reviewItems.map((it, i) =>
+      i !== editingItemIndex ? it : { ...it, translatedName: newName, name: newName, low_confidence: false }
+    );
     setReviewItems(updated);
     setEditingItemIndex(null);
   };
   const removeReviewItem = (index) => {
+    if (confirmingRemoveIndex !== index) {
+      setConfirmingRemoveIndex(index);
+      return;
+    }
+    const item = reviewItems[index];
+    logExtractionNoise(item.originalName || item.name);
+    if (item.originalCode && item.originalCode !== item.name) {
+      addProductTranslation(item.originalCode, item.name);
+    }
     setReviewItems(prev => prev.filter((_, i) => i !== index));
+    setConfirmingRemoveIndex(null);
   };
   const handleAddReviewItem = () => {
     const name = addItemName.trim();
@@ -366,11 +376,17 @@ export function ScanPage() {
     if (!name) return;
     const newItem = { name, translatedName: name, price, quantity: 1, nonFood: false, low_confidence: false, manuallyAdded: true };
     setReviewItems(prev => [...prev, newItem]);
-    // Track manual addition for dictionary
-    setPendingDictEntries(prev => [...prev, { raw: name, cleaned: name }]);
+    addProductTranslation(name, name);
     setAddItemName('');
     setAddItemPrice('');
     setShowAddReviewItem(false);
+  };
+
+  const updateItemQuantity = (index, delta) => {
+    setReviewItems(prev => prev.map((item, i) => {
+      if (i !== index) return item;
+      return { ...item, quantity: Math.max(1, (item.quantity || 1) + delta) };
+    }));
   };
 
   const handleProcessImages = async () => {
@@ -726,181 +742,253 @@ export function ScanPage() {
       )}
 
       {/* Review Step — shown after extraction for all input methods */}
-      {step === 'reviewing' && (
-        <div className="space-y-4">
-          {/* Confidence badge */}
-          {extractionConfidence === 'low' && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-              <p className="text-sm font-semibold text-amber-800">We could only read part of this receipt</p>
-              <p className="text-sm text-amber-700 mt-0.5">Check what we found below and add anything missing before scoring.</p>
-            </div>
-          )}
-
-          {/* Detected supermarket chip */}
-          {detectedSupermarket && detectedSupermarket !== 'generic' && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs bg-gray-100 text-gray-600 rounded-full px-3 py-1 border border-gray-200">
-                {SUPERMARKET_PROFILES[detectedSupermarket]?.name || detectedSupermarket}
-              </span>
-            </div>
-          )}
-
-          {/* Items list — editable */}
-          <Card>
-            <div className="flex items-center justify-between mb-3">
-              <CardTitle>Items Found ({reviewItems.length})</CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => setShowAddModal(true)}>
-                + Add Code
-              </Button>
-            </div>
-
-            {/* Allergen warning */}
-            {householdAllergens.length > 0 && !allergenWarningDismissed && (
-              <div className="mb-3 bg-red-50 border border-red-100 rounded-xl p-3 animate-allergen-pulse">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="space-y-0.5">
-                    <p className="text-xs font-bold text-red-700 uppercase tracking-wide">⚠️ Allergen check active</p>
-                    <p className="text-xs text-red-600">
-                      Checking against: {householdAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}
-                    </p>
-                  </div>
-                  <button onClick={() => setAllergenWarningDismissed(true)} className="text-red-400 hover:text-red-600 flex-shrink-0 mt-0.5" aria-label="Dismiss allergen warning">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                </div>
+      {step === 'reviewing' && (() => {
+        const flagCount = reviewItems.filter(i => i.low_confidence).length;
+        const itemCount = reviewItems.length;
+        const confidenceLevel =
+          itemCount >= 10 && flagCount === 0 ? 'high' :
+          itemCount >= 5 && flagCount <= 3   ? 'medium' : 'low';
+        return (
+          <div className="space-y-4">
+            {/* Confidence banner */}
+            {confidenceLevel === 'high' && (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-green-800">Everything looks good</p>
+                <p className="text-sm text-green-700 mt-0.5">Scroll through and hit Score My Shop when you're ready.</p>
+              </div>
+            )}
+            {confidenceLevel === 'medium' && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-amber-800">We flagged a few items worth checking</p>
+                <p className="text-sm text-amber-700 mt-0.5">They're marked in amber below.</p>
+              </div>
+            )}
+            {confidenceLevel === 'low' && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-red-800">We could only read part of this receipt</p>
+                <p className="text-sm text-red-700 mt-0.5">Add any missing items before scoring.</p>
               </div>
             )}
 
-            <div className="space-y-1 max-h-96 overflow-y-auto">
-              {reviewItems.map((item, index) => {
-                const itemName = item.translatedName || item.name;
-                const allergenFlags = checkItemAllergens(itemName, householdAllergens);
-                const personNames = allergenFlags.length
-                  ? [...new Set(allergenFlags.flatMap(f => allergenPersonMap[f.allergenValue] || []))]
-                  : [];
-                const hasAllergen = allergenFlags.length > 0;
-                const isEditing = editingItemIndex === index;
-                return (
-                  <div key={index} className={`py-2 border-b border-gray-100 last:border-0 ${hasAllergen ? 'bg-red-50 -mx-1 px-1 rounded-xl' : ''}`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        {isEditing ? (
-                          <div className="flex gap-2">
-                            <input
-                              autoFocus
-                              value={editingItemName}
-                              onChange={e => setEditingItemName(e.target.value)}
-                              onBlur={confirmEditReviewItem}
-                              onKeyDown={e => { if (e.key === 'Enter') confirmEditReviewItem(); if (e.key === 'Escape') setEditingItemIndex(null); }}
-                              className="flex-1 text-sm border border-basket-green-400 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
-                            />
-                            <button onClick={confirmEditReviewItem} className="text-xs text-basket-green-600 font-medium px-2">Done</button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {hasAllergen && <span className="text-base">⚠️</span>}
-                            <button
-                              onClick={() => startEditReviewItem(index)}
-                              className={`font-medium text-left hover:text-basket-green-700 transition-colors ${hasAllergen ? 'text-red-900' : 'text-gray-900'} ${item.low_confidence ? 'border-b border-amber-400' : ''}`}
-                            >
-                              {itemName}
-                            </button>
-                            {item.nonFood && <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>}
-                            {item.low_confidence && <span className="text-xs text-amber-500">?</span>}
-                          </div>
-                        )}
-                        {item.originalCode && item.translatedName !== item.originalCode && (
-                          <p className="text-xs text-gray-400">{item.originalCode}</p>
-                        )}
-                        {item.low_confidence && item.originalName && item.originalName !== itemName && (
-                          <p className="text-xs text-amber-600 mt-0.5">Read as: {item.originalName}</p>
-                        )}
-                        <AllergenFlag flags={allergenFlags} personNames={personNames} />
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="text-right">
-                          <p className="font-medium text-sm">{formatPrice(item.price)}</p>
-                          {item.quantity > 1 && <p className="text-xs text-gray-400">x{item.quantity}</p>}
+            {/* Detected supermarket chip */}
+            {detectedSupermarket && detectedSupermarket !== 'generic' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-gray-100 text-gray-600 rounded-full px-3 py-1 border border-gray-200">
+                  {SUPERMARKET_PROFILES[detectedSupermarket]?.name || detectedSupermarket}
+                </span>
+              </div>
+            )}
+
+            {/* Items list — editable */}
+            <Card>
+              <div className="flex items-center justify-between mb-1">
+                <div>
+                  <CardTitle>Here's what we found</CardTitle>
+                  <p className="text-xs text-gray-400 mt-0.5">{itemCount} item{itemCount !== 1 ? 's' : ''} found</p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setShowAddModal(true)}>
+                  + Add Code
+                </Button>
+              </div>
+
+              {/* Allergen warning */}
+              {householdAllergens.length > 0 && !allergenWarningDismissed && (
+                <div className="mb-3 bg-red-50 border border-red-100 rounded-xl p-3 animate-allergen-pulse">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-red-700 uppercase tracking-wide">⚠️ Allergen check active</p>
+                      <p className="text-xs text-red-600">
+                        Checking against: {householdAllergens.map(a => ALLERGENS.find(x => x.value === a)?.label || a).join(', ')}
+                      </p>
+                    </div>
+                    <button onClick={() => setAllergenWarningDismissed(true)} className="text-red-400 hover:text-red-600 flex-shrink-0 mt-0.5" aria-label="Dismiss allergen warning">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1 max-h-96 overflow-y-auto mt-3">
+                {reviewItems.map((item, index) => {
+                  const itemName = item.translatedName || item.name;
+                  const allergenFlags = checkItemAllergens(itemName, householdAllergens);
+                  const personNames = allergenFlags.length
+                    ? [...new Set(allergenFlags.flatMap(f => allergenPersonMap[f.allergenValue] || []))]
+                    : [];
+                  const hasAllergen = allergenFlags.length > 0;
+                  const isEditing = editingItemIndex === index;
+                  const isConfirmingRemove = confirmingRemoveIndex === index;
+
+                  // Row left-border indicator
+                  let rowBorder = '';
+                  if (item.low_confidence) rowBorder = 'border-l-4 border-amber-400';
+                  else if (item.substitution) rowBorder = 'border-l-4 border-teal-500';
+                  else if (item.manuallyAdded) rowBorder = 'border-l-4 border-basket-green-400';
+
+                  return (
+                    <div key={index} className={`py-2 border-b border-gray-100 last:border-0 pl-2 ${rowBorder} ${hasAllergen ? 'bg-red-50 rounded-xl' : ''}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          {isEditing ? (
+                            <div className="space-y-1">
+                              <div className="flex gap-2">
+                                <input
+                                  autoFocus
+                                  value={editingItemName}
+                                  onChange={e => setEditingItemName(e.target.value)}
+                                  onBlur={confirmEditReviewItem}
+                                  onKeyDown={e => { if (e.key === 'Enter') confirmEditReviewItem(); if (e.key === 'Escape') setEditingItemIndex(null); }}
+                                  className="flex-1 text-sm border border-basket-green-400 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
+                                />
+                                <button onClick={confirmEditReviewItem} className="text-xs text-basket-green-600 font-medium px-2">Done</button>
+                              </div>
+                              {(item.originalName || item.originalCode) && (
+                                <p className="text-xs text-gray-400">Originally read as: {item.originalName || item.originalCode}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap relative">
+                                {hasAllergen && <span className="text-base">⚠️</span>}
+                                <button
+                                  onClick={() => startEditReviewItem(index)}
+                                  className={`font-medium text-left hover:text-basket-green-700 transition-colors ${hasAllergen ? 'text-red-900' : 'text-gray-900'}`}
+                                >
+                                  {itemName}
+                                </button>
+                                {item.nonFood && <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">non-food</span>}
+                                {item.low_confidence && <span className="text-xs text-amber-500 font-bold">●</span>}
+                              </div>
+                              {item.substitution && (
+                                <p className="text-xs text-teal-600 mt-0.5">Substituted item — this is what was delivered</p>
+                              )}
+                              {item.originalCode && item.translatedName !== item.originalCode && (
+                                <p className="text-xs text-gray-400">{item.originalCode}</p>
+                              )}
+                            </div>
+                          )}
+                          <AllergenFlag flags={allergenFlags} personNames={personNames} />
                         </div>
-                        <button onClick={() => removeReviewItem(index)} className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none" aria-label="Remove item">×</button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <p className="font-medium text-sm">{formatPrice(item.price)}</p>
+                            <div className="flex items-center gap-1 justify-end mt-0.5">
+                              <button
+                                onClick={() => updateItemQuantity(index, -1)}
+                                className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 bg-gray-100 rounded text-xs leading-none"
+                                aria-label="Decrease quantity"
+                              >−</button>
+                              <span className="text-xs text-gray-500 w-4 text-center">{item.quantity || 1}</span>
+                              <button
+                                onClick={() => updateItemQuantity(index, +1)}
+                                className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 bg-gray-100 rounded text-xs leading-none"
+                                aria-label="Increase quantity"
+                              >+</button>
+                            </div>
+                          </div>
+                          {isConfirmingRemove ? (
+                            <div className="flex flex-col items-end gap-1">
+                              <p className="text-xs text-gray-500">Remove?</p>
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => removeReviewItem(index)}
+                                  className="text-xs text-red-600 font-semibold hover:text-red-800 px-1"
+                                >Yes</button>
+                                <button
+                                  onClick={() => setConfirmingRemoveIndex(null)}
+                                  className="text-xs text-gray-400 hover:text-gray-600 px-1"
+                                >Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => removeReviewItem(index)}
+                              className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                              aria-label="Remove item"
+                            >×</button>
+                          )}
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+
+              {/* Add item form */}
+              {showAddReviewItem ? (
+                <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                  <p className="text-xs font-medium text-gray-600">Add a missing item</p>
+                  <div className="flex gap-2">
+                    <input
+                      autoFocus
+                      value={addItemName}
+                      onChange={e => setAddItemName(e.target.value)}
+                      placeholder="Item name"
+                      className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddReviewItem(); }}
+                    />
+                    <input
+                      value={addItemPrice}
+                      onChange={e => setAddItemPrice(e.target.value)}
+                      placeholder="£0.00"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="w-20 text-sm border border-gray-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
+                    />
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Add item form */}
-            {showAddReviewItem ? (
-              <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
-                <p className="text-xs font-medium text-gray-600">Add a missing item</p>
-                <div className="flex gap-2">
-                  <input
-                    autoFocus
-                    value={addItemName}
-                    onChange={e => setAddItemName(e.target.value)}
-                    placeholder="Item name"
-                    className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
-                    onKeyDown={e => { if (e.key === 'Enter') handleAddReviewItem(); }}
-                  />
-                  <input
-                    value={addItemPrice}
-                    onChange={e => setAddItemPrice(e.target.value)}
-                    placeholder="£0.00"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    className="w-20 text-sm border border-gray-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-2 focus:ring-basket-green-300"
-                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={handleAddReviewItem} disabled={!addItemName.trim()}>Add</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setShowAddReviewItem(false)}>Cancel</Button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleAddReviewItem} disabled={!addItemName.trim()}>Add</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setShowAddReviewItem(false)}>Cancel</Button>
+              ) : (
+                <button onClick={() => setShowAddReviewItem(true)} className="mt-3 pt-3 border-t border-gray-100 w-full text-sm text-basket-green-600 hover:text-basket-green-700 text-left font-medium">
+                  + Add missing item
+                </button>
+              )}
+
+              {/* Total */}
+              <div className="mt-4 pt-3 border-t border-gray-200 flex justify-between items-center">
+                <span className="font-semibold">Total</span>
+                <span className="text-xl font-bold text-basket-green-500">
+                  {formatPrice(reviewItems.reduce((s, i) => s + (Number(i.price) || 0), 0))}
+                </span>
+              </div>
+
+              {/* Allergen disclaimer */}
+              {householdAllergens.length > 0 && (
+                <div className="mt-3 bg-amber-50 border border-amber-100 rounded-xl p-3">
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    <span className="font-bold">Important: </span>{ALLERGEN_DISCLAIMER}
+                  </p>
                 </div>
-              </div>
-            ) : (
-              <button onClick={() => setShowAddReviewItem(true)} className="mt-3 pt-3 border-t border-gray-100 w-full text-sm text-basket-green-600 hover:text-basket-green-700 text-left font-medium">
-                + Add missing item
-              </button>
-            )}
+              )}
+            </Card>
 
-            {/* Total */}
-            <div className="mt-4 pt-3 border-t border-gray-200 flex justify-between items-center">
-              <span className="font-semibold">Total</span>
-              <span className="text-xl font-bold text-basket-green-500">
-                {formatPrice(reviewItems.reduce((s, i) => s + (Number(i.price) || 0), 0))}
-              </span>
+            {/* Actions */}
+            <p className="text-xs text-center text-gray-400">
+              Scoring {reviewItems.filter(i => !i.nonFood).length} item{reviewItems.filter(i => !i.nonFood).length !== 1 ? 's' : ''}
+            </p>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={resetScan} className="flex-1">
+                Start over
+              </Button>
+              <Button
+                onClick={handleAnalyze}
+                loading={loading}
+                disabled={loading || !!processingStep || reviewItems.filter(i => !i.nonFood).length < 3}
+                className="flex-1"
+              >
+                {loading ? (processingStep || 'Analysing…') : 'Score My Shop'}
+              </Button>
             </div>
-
-            {/* Allergen disclaimer */}
-            {householdAllergens.length > 0 && (
-              <div className="mt-3 bg-amber-50 border border-amber-100 rounded-xl p-3">
-                <p className="text-xs text-amber-700 leading-relaxed">
-                  <span className="font-bold">Important: </span>{ALLERGEN_DISCLAIMER}
-                </p>
-              </div>
+            {reviewItems.filter(i => !i.nonFood).length < 3 && (
+              <p className="text-xs text-gray-400 text-center -mt-2">Add at least 3 food items to score this shop</p>
             )}
-          </Card>
-
-          {/* Actions */}
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={resetScan} className="flex-1">
-              Start over
-            </Button>
-            <Button
-              onClick={handleAnalyze}
-              loading={loading}
-              disabled={loading || !!processingStep || reviewItems.filter(i => !i.nonFood).length < 3}
-              className="flex-1"
-            >
-              {loading ? (processingStep || 'Analysing…') : 'Score this shop'}
-            </Button>
           </div>
-          {reviewItems.filter(i => !i.nonFood).length < 3 && (
-            <p className="text-xs text-gray-400 text-center -mt-2">Add at least 3 food items to score this shop</p>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {/* Analyzed Step */}
       {step === 'analyzed' && (

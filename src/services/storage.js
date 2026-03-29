@@ -367,6 +367,17 @@ export function saveShoppingList(list) {
   }
 }
 
+// ─── Extraction Noise Log ─────────────────────────────────────────────────────
+
+export function logExtractionNoise(rawText) {
+  try {
+    const raw = localStorage.getItem('yumit_extraction_noise');
+    const log = raw ? JSON.parse(raw) : [];
+    log.unshift({ text: rawText, date: new Date().toISOString() });
+    localStorage.setItem('yumit_extraction_noise', JSON.stringify(log.slice(0, 200)));
+  } catch { /* quota exceeded — silently skip */ }
+}
+
 // ─── Reset ────────────────────────────────────────────────────────────────────
 
 export function resetToDefaults() {
